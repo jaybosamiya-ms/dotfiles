@@ -1,3 +1,4 @@
+node lts
 python 3.12.2 pypy3.10-7.3.15
 # Use
 #
