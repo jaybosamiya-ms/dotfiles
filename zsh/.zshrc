@@ -490,6 +490,20 @@ if [ -z "$ASCIINEMA_REC" ]; then
     test -f ~/.nix-profile/share/zsh-autosuggestions/zsh-autosuggestions.zsh && source ~/.nix-profile/share/zsh-autosuggestions/zsh-autosuggestions.zsh
 fi
 
+# Track directories so new tab can open in same directory. Do so only on Windows
+# Terminal, which needs this.
+#
+# Only works properly if the correct profile is selected ("source":
+# "Windows.Terminal.Wsl") within Windows Terminal's settings.json as the one for
+# Ubuntu (it should NOT have a command line set). Additionally, out of pure
+# convenience, it is helpful to bind Ctrl+Shift+T to "Duplicate tab" (I also
+# keep it bound to Ctrl+Shift+D which is its default); I also move away "New
+# Tab" to be on Ctrl+Alt+Shift+T.
+if test -n "$WT_SESSION"; then
+    # See https://learn.microsoft.com/en-us/windows/terminal/tutorials/new-tab-same-directory
+    __keep_current_path() { printf "\e]9;9;%s\e\\" "$(wslpath -w "$PWD")" }
+    precmd_functions+=(__keep_current_path)
+fi
 
 # connect up to cargo
 if [ -f ~/.cargo/env ]; then
