@@ -490,6 +490,17 @@ if [ -z "$ASCIINEMA_REC" ]; then
     test -f ~/.nix-profile/share/zsh-autosuggestions/zsh-autosuggestions.zsh && source ~/.nix-profile/share/zsh-autosuggestions/zsh-autosuggestions.zsh
 fi
 
+
+# connect up to cargo
+if [ -f ~/.cargo/env ]; then
+    . "$HOME/.cargo/env"
+fi
+
+# If atuin exists, use it
+if command -v atuin >/dev/null; then
+    eval "$(atuin init zsh --disable-up-arrow)"
+fi
+
 # Enable nice syntax highlighting if available
 # Install via [sudo apt install zsh-syntax-highlighting]
 # NOTE: This MUST be at the end of .zshrc
@@ -498,9 +509,3 @@ test -f ~/.nix-profile/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh
 
 # To customize prompt, run `p10k configure` or edit ~/.p10k.zsh.
 [[ ! -f ~/.p10k.zsh ]] || source ~/.p10k.zsh
-. "$HOME/.cargo/env"
-
-# If atuin exists, use it
-if command -v atuin >/dev/null; then
-    eval "$(atuin init zsh --disable-up-arrow)"
-fi
