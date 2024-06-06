@@ -40,6 +40,10 @@ email = jaybosamiya@gmail.com
     insteadOf = sshttps://github.com/
 [url "ssh://git@gist.github.com/"]
     insteadOf = sshttps://gist.github.com/jaybosamiya/
+[url "ssh://git@pgithub/"]
+    insteadOf = psshttps://www.github.com/
+[url "ssh://git@pgithub/"]
+    insteadOf = psshttps://github.com/
 [pull]
     rebase = false
 
