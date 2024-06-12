@@ -32,6 +32,7 @@ email = jaybosamiya@gmail.com
     pr = "!f() { git fetch origin \"pull/${1}/head:pr-${1}\"; git checkout \"pr-${1}\"; }; f"
     wt = "!f() { if [ $# -lt 1 -o \"${1}\" = \"-h\" ]; then echo \"Usage: git wt {branch}\"; else git -C main fetch origin; if git -C main ls-remote --exit-code --heads origin \"${1}\" >/dev/null; then git -C main worktree add \"../${1}\"; else echo \"No such remote branch. Maybe you want 'git wta ${1}'?\"; fi; fi; }; f"
     wta = "!f() { if [ $# -lt 1 -o \"${1}\" = \"-h\" ]; then echo \"Usage: git wta {branch}\"; else git -C main fetch origin; if git -C main ls-remote --exit-code --heads origin \"${1}\" >/dev/null; then echo \"Found remote branch with same name. Maybe you want 'git wt ${1}'?\"; else git -C main worktree add \"../${1}\"; fi; fi; }; f"
+    wtpr = "!f() { git -C main fetch origin \"pull/${1}/head:pr-${1}\"; git -C main worktree add ../pr-${1}; }; f"
 [init]
     defaultBranch = main
 [url "ssh://git@github.com/"]
