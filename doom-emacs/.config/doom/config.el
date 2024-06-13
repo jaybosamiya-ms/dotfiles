@@ -186,6 +186,13 @@ a warning message and leave it as-is. ARGS accepts the syntax as in `map!'."
   ;;     Support for forward search from emacs to skim is added later in this file.
   )
 
+;; System-specific behavior
+(when (string= (system-name) "asphodel")
+  ;; We are using Emacs-pgtk on WSL2, which messes with clipboard. So, we set
+  ;; select-active-regions to nil which fixes the clipboard issue. See
+  ;; https://www.lukas-barth.net/blog/emacs-wsl-copy-clipboard/ for details.
+  (setq select-active-regions nil))
+
 ;; Visual niceties
 (progn
   ;; Doom exposes five (optional) variables for controlling fonts in Doom:
