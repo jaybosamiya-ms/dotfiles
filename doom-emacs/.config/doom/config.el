@@ -555,8 +555,8 @@ a warning message and leave it as-is. ARGS accepts the syntax as in `map!'."
 
 ;; Verus language specific things
 (use-package! verus-mode
-  :init (setq verus-home "~/this-sem/verus/verus"
-              verus-analyzer "~/this-sem/verus/rust-analyzer"))
+  :init (setq verus-home "~/projects/verus/verus/main"
+              verus-analyzer "~/projects/verus/rust-analyzer"))
 
 ;; Rust language specific things
 (progn
