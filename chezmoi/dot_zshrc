@@ -127,7 +127,7 @@ fi
 
 if command -v cargo >/dev/null; then
     function cargo() {
-        if [ -t 1 ]; then
+        if [ -t 1 ] && [ -t 2 ]; then
             CARGO_TERM_COLOR=always command cargo "$@" |& less -RFX
         else
             command cargo "$@"
