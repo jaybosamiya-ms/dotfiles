@@ -43,7 +43,17 @@ if command -v nix-index >/dev/null; then source ~/.nix-command-not-found.sh || e
 #
 # Potentially worth considering: using a suffix alias (for say, `.help`) that runs a
 # function that will then do the unbuffer _and_ less pipe stuff; not sure it works though
-alias -g + --help='--help |& less -RF'
+#alias -g + --help='--help |& less -RF'
+
+# Add a convenient Control-H binding that does useful things for --help
+bindkey '^H' __helper_function_for_ctrl_h
+__helper_function_for_ctrl_h() {
+  local initial_spaces="${BUFFER%%[^ ]*}"
+  BUFFER="${initial_spaces}unbuffer $BUFFER --help | less -RF"
+  CURSOR=${#BUFFER}
+  zle redisplay
+}
+zle -N __helper_function_for_ctrl_h
 
 # Useful utility function
 function _unwrap_or {
