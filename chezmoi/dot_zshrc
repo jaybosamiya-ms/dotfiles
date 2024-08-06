@@ -173,7 +173,7 @@ if command -v jq >/dev/null; then
     function jqi() {
         # ijq prints the output to stdout, and filter to stderr
 	# We just kill stdout, and move stderr to stdout instead
-        ijq 2>&1 1>/dev/null
+        ijq 2>&1 1>/dev/null "$@"
     }
 fi
 
