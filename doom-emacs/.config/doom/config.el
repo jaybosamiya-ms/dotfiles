@@ -910,3 +910,12 @@ argument."
   :bind (("C-S-<SPC>" . bm-toggle)
          ("C-:" . bm-next)
          ("C-\"" . bm-previous)))
+
+;; Improve zen by adding some helpful keybindings
+(use-package! writeroom-mode
+  :after hydra
+  :config
+  (defhydra hydra-writeroom (writeroom-mode-map "C-c")
+    "Writeroom"
+    ("[" writeroom-decrease-width "Decrease width")
+    ("]" writeroom-increase-width "Increase width")))
