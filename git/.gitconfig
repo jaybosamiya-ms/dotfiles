@@ -68,3 +68,5 @@
 # forget <PATHSPEC>`
 [rerere]
     enabled = true
+[merge]
+	conflictStyle = zdiff3
