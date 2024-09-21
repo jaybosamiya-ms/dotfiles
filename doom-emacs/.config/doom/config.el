@@ -492,12 +492,12 @@ a warning message and leave it as-is. ARGS accepts the syntax as in `map!'."
               (use-local-map (copy-keymap (car (current-active-maps))))
               (local-set-key (kbd "q") 'kill-this-buffer))))))
 
-;; Enable smooth scrolling, via good-scroll; also set page up/down to scroll
-;; smoothly by a full screenfull
-(use-package! good-scroll
-  :init (good-scroll-mode 1)
-  :bind (("<prior>" . good-scroll-down-full-screen)
-         ("<next>" . good-scroll-up-full-screen)))
+;; ;; Enable smooth scrolling, via good-scroll; also set page up/down to scroll
+;; ;; smoothly by a full screenfull
+;; (use-package! good-scroll
+;;   :init (good-scroll-mode 1)
+;;   :bind (("<prior>" . good-scroll-down-full-screen)
+;;          ("<next>" . good-scroll-up-full-screen)))
 
 ;; Enable hi-lock-mode globally, since it is ridiculously useful to be able to
 ;; do custom highlighting within a single file, to keep track of (say)
