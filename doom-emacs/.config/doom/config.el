@@ -58,6 +58,9 @@
 (setq user-full-name "Jay Bosamiya"
       user-mail-address "doomemacsconfig@jaybosamiya.com")
 
+;; Make alt work as meta, even over VNC.
+(setq x-alt-keysym 'meta)
+
 ;; MacOS specific overrides
 (when (featurep :system 'macos)
   ;; mac-* variables are used by the special emacs-mac build of Emacs by
