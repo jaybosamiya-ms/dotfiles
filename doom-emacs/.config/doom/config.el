@@ -190,7 +190,9 @@ a warning message and leave it as-is. ARGS accepts the syntax as in `map!'."
   )
 
 ;; System-specific behavior
-(when (string= (system-name) "asphodel")
+(when (or
+       (string= (system-name) "asphodel")
+       (string= (system-name) "magmell"))
   ;; We are using Emacs-pgtk on WSL2, which messes with clipboard. So, we set
   ;; select-active-regions to nil which fixes the clipboard issue. See
   ;; https://www.lukas-barth.net/blog/emacs-wsl-copy-clipboard/ for details.
