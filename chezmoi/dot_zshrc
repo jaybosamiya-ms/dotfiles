@@ -313,6 +313,10 @@ if command -v asciinema >/dev/null; then
 fi
 
 function e() {
+    if [[ ${HOST%%.*} == "magmell" && ! -L "/run/user/1000/wayland-0" ]]; then
+        echo "Wayland shenanigans have occurred. Setting it up again..."
+        ln -s /mnt/wslg/runtime-dir/wayland-0* /run/user/1000/
+    fi
     case "$OSTYPE" in
     darwin*)
         if [ $# = 0 ]; then
