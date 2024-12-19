@@ -1,0 +1,7 @@
+[user]
+email = "jayb@microsoft.com"
+name = "Jay Bosamiya"
+
+[ui]
+diff-editor = ":builtin"
+default-command = "st"
