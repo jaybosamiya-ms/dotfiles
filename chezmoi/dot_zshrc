@@ -119,6 +119,8 @@ function c {
     fi
 }
 
+alias less="less --chop-long-lines"
+
 # Set up zoxide if it exists to make cd easier
 #
 # Install using `cargo install zoxide --locked`
