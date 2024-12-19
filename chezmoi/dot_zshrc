@@ -55,6 +55,9 @@ __helper_function_for_ctrl_h() {
 }
 zle -N __helper_function_for_ctrl_h
 
+# Switch Meta-l back to lower-caseing things, rather than running "ls^J" for whatever reason
+bindkey '^[l' down-case-word
+
 # Useful utility function
 function _unwrap_or {
     default="$1"
