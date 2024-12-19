@@ -27,7 +27,7 @@ if [[ -f ~/.p10k.zsh ]]; then
 else
     ZSH_THEME="robbyrussell"
 fi
-plugins=(git command-not-found rust pass just)
+plugins=(git command-not-found rust pass just F-Sy-H)
 source $ZSH/oh-my-zsh.sh || git clone git://github.com/robbyrussell/oh-my-zsh.git ~/.oh-my-zsh
 if command -v nix-index >/dev/null; then source ~/.nix-command-not-found.sh || echo "Might want to stow nix-command-not-found for niceties"; fi
 
@@ -579,11 +579,20 @@ if command -v atuin >/dev/null; then
     eval "$(atuin init zsh --disable-up-arrow)"
 fi
 
-# Enable nice syntax highlighting if available
-# Install via [sudo apt install zsh-syntax-highlighting]
-# NOTE: This MUST be at the end of .zshrc
-test -f /usr/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh && source /usr/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh
-test -f ~/.nix-profile/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh && source ~/.nix-profile/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh
+if [ -d "${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}/plugins/F-Sy-H" ]; then
+    # We have the F-Sy-H plugin, we'll just use it
+else
+    # We can pull in F-Sy-H
+    echo "[!] Cloning F-Sy-H..."
+    git clone https://github.com/z-shell/F-Sy-H.git ${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}/plugins/F-Sy-H
+    # Or (commented out right now, but if I decide to move away from F-Sy-H, this exists):
+    #
+    # Enable nice syntax highlighting if available
+    # Install via [sudo apt install zsh-syntax-highlighting]
+    # NOTE: This MUST be at the end of .zshrc
+    #test -f /usr/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh && source /usr/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh
+    #test -f ~/.nix-profile/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh && source ~/.nix-profile/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh
+fi
 
 # To customize prompt, run `p10k configure` or edit ~/.p10k.zsh.
 [[ ! -f ~/.p10k.zsh ]] || source ~/.p10k.zsh
