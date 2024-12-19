@@ -95,6 +95,11 @@ if command -v wslview >/dev/null; then
     alias open=wslview
 fi
 
+# Get completions for jujutsu if available
+if command -v jj >/dev/null; then
+    source <(jj util completion zsh)
+fi
+
 # Make it easy to clear out any existing open SSH sockets
 function ssh-clear {
     # Ask for confirmation on each file in ~/.ssh/*.sock
