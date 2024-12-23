@@ -39,3 +39,9 @@ unzip Iosevka.zip
 mv Iosevka*.ttf ~/.local/share/fonts/
 fc-cache --force --verbose
 ```
+
+## Connecting PDF inverse search into WSL:
+
+```
+"C:\Program Files\WSL\wslg.exe" -- "/home/jayb/.local/bin/emacsclient_from_windows" --no-wait +%l "%f"
+```
