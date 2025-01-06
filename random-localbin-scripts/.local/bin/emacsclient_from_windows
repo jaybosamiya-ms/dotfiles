@@ -8,6 +8,11 @@ function convertpath_or_unchanged() {
         STRIPPED=${1#\\wsl.localhost\\Ubuntu}
         # Convert all backslashes to forward slashes
         echo -E "${STRIPPED//\\//}"
+    elif [[ $1 == \\wsl\$\\Ubuntu* ]]; then
+        # Strip the "\wsl$\Ubuntu" prefix
+        STRIPPED=${1#\\wsl\$\\Ubuntu}
+        # Convert all backslashes to forward slashes
+        echo -E "${STRIPPED//\\//}"
     else
         echo -E "$1"
     fi
