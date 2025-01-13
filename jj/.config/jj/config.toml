@@ -6,3 +6,7 @@ name = "Jay Bosamiya"
 diff-editor = ":builtin"
 default-command = "st"
 pager = "less -FR"
+
+[git]
+# Prevent pushing work in progress or anything explicitly labeled "private"
+private-commits = "description(regex:'^(wip|private|todo|donotpush):') | description(regex:'\\[(wip|private|todo|donotpush)\\]')"
