@@ -13,6 +13,11 @@ function convertpath_or_unchanged() {
         STRIPPED=${1#\\wsl\$\\Ubuntu}
         # Convert all backslashes to forward slashes
         echo -E "${STRIPPED//\\//}"
+    elif [[ $1 == C:\\home\\* ]]; then
+        # Strip the "C:" prefix
+        STRIPPED=${1#C:}
+        # Convert all backslashes to forward slashes
+        echo -E "${STRIPPED//\\//}"
     else
         echo -E "$1"
     fi
