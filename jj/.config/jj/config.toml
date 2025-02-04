@@ -10,3 +10,14 @@ pager = "less -FR"
 [git]
 # Prevent pushing work in progress or anything explicitly labeled "private"
 private-commits = "description(regex:'^(wip|private|todo|donotpush):') | description(regex:'\\[(wip|private|todo|donotpush)\\]')"
+
+[revset-aliases]
+# Additionally, mark commits authored by other users as immutable too.
+#
+# The default immutable heads (`present(trunk()) | tags() |
+# untracked_remote_bookmarks()`) can be found
+# [here](https://jj-vcs.github.io/jj/latest/config/#set-of-immutable-commits).
+#
+# The `trunk().. &` bit is an optimization to scan for non-`mine()` commits
+# only among commits that are not in `trunk()`.
+"immutable_heads()" = "builtin_immutable_heads() | (trunk().. & ~mine())"
