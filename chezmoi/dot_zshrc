@@ -141,10 +141,13 @@ fi
 
 if command -v rg >/dev/null; then
     function rg() {
+	# --no-require-git causes .gitignore to be respected even if `.git` is not found;
+	# This is necessary for `jj` repositories until https://github.com/BurntSushi/ripgrep/pull/2842
+	# or similar PR is merged.
         if [ -t 1 ]; then
-            command rg -p "$@" | less -RFX
+            command rg --no-require-git -p "$@" | less -RFX
         else
-            command rg "$@"
+            command rg --no-require-git "$@"
         fi
     }
 fi
