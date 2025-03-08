@@ -4,16 +4,6 @@ Requires GNU Stow `sudo apt install stow`/`nix-env -iA nixpkgs.stow`
 
 Simply `stow $PKGNAME` to add all dotfiles for PKGNAME
 
-## Chezmoi
-
-Over time, I am migrating things to [chezmoi](https://www.chezmoi.io/) 
-
-- Install: `nix-env -iA nixpkgs.chezmoi`
-- Initialize: `chezmoi init https://github.com/...`
-- Look at changes: `chezmoi diff`
-- Apply changes: `chezmoi apply`
-  - Note: `chezmoi apply -nv` is useful to know what would be updated without actually updating it.
-
 ## Emacs config
 
 My custom hand-rolled config works with `stow emacs`, but I am currently in the

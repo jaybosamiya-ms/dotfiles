@@ -1,9 +1,0 @@
-{{- $fullname := promptStringOnce . "fullname" "Full name" -}}
-{{- $email := promptStringOnce . "email" "Email address" -}}
-
-[git]
-autoCommit = true
-
-[data]
-    email = {{ $email | quote }}
-    fullname = {{ $fullname | quote }}
