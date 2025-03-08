@@ -52,3 +52,19 @@ ff = [
   "--from", "latest(bookmarks(jayb) & ancestors(@))",
   "--to", "latest(ancestors(@) & (merges() | ~empty()))"
 ]
+
+# A tiny convenience script that adds an LLM description to the current
+# revision, for cases where a detailed description is not crucial, but having
+# some description is helpful. The final `""` makes sure things show up as $@ in
+# the order/position expected.
+llm = ["util", "exec", "--", "bash", "-c", """
+#!/usr/bin/env bash
+set -euo pipefail
+RES=$(jj diff --git "$@" | llm --system "Generate a concise, single-line commit message for this diff, focusing on its intent rather than just describing the changed module. If it is a typo fix, prefix with 'typo fixup: '. Avoid extra phrasing like 'The commit message is:' and output only the commit message itself.")
+echo "$RES"
+read -n 1 -r -p "Use description? (Y/n): " response
+echo
+response=${response:-Y}
+if [[ "$response" =~ ^[Yy]$ ]]; then
+    jj describe "$@" -m "$RES"
+fi""", ""]
