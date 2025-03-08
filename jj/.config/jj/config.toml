@@ -43,3 +43,12 @@ concat(
   diff.git(),
 )
 '''
+
+[aliases]
+# Fast forward my latest bookmark on the current branch to the latest non-empty
+# (or merge) commit.
+ff = [
+  "bookmark", "move",
+  "--from", "latest(bookmarks(jayb) & ancestors(@))",
+  "--to", "latest(ancestors(@) & (merges() | ~empty()))"
+]
