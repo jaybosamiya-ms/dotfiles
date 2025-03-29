@@ -53,6 +53,13 @@ ff = [
   "--to", "latest(ancestors(@) & (merges() | ~empty()))"
 ]
 
+# Same as `jj ff` but for main in particular
+ffm = [
+  "bookmark", "move",
+  "--from", "latest(bookmarks(main) & ancestors(@))",
+  "--to", "latest(ancestors(@) & (merges() | ~empty()))"
+]
+
 # A tiny convenience script that adds an LLM description to the current
 # revision, for cases where a detailed description is not crucial, but having
 # some description is helpful. The final `""` makes sure things show up as $@ in
