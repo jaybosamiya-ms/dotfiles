@@ -67,11 +67,24 @@ llmb = ["util", "exec", "--", "bash", "-c", """
 set -euo pipefail
 SYSTEM_PROMPT="Generate a short, lowercase, hyphenated branch name that captures the core theme of these commits---no slashes, no prefixes like 'feat', just clear and concise wording."
 RES=$(jj log -r 'bookmarks()..@' --reversed | llm --system "$SYSTEM_PROMPT")
-BRANCH_NAME="jayb/$RES"
-echo "$BRANCH_NAME"
-read -n 1 -r -p "Use branch name? (Y/n): " response
-echo
-response=${response:-Y}
+while true; do
+    BRANCH_NAME="jayb/$RES"
+    echo "$BRANCH_NAME"
+    read -n 1 -r -p "Use branch name? ([Y]es/[n]o/[e]dit): " response
+    echo
+    response=${response:-Y}
+    if [[ "$response" =~ ^[Ee]$ ]]; then
+        TMPFILE=$(mktemp)
+        echo "$RES" > "$TMPFILE"
+        ${EDITOR:-vi} "$TMPFILE"
+        RES=$(<"$TMPFILE")
+        RES=$(printf "%s" "$RES")
+        rm "$TMPFILE"
+    fi
+    if [[ "$response" =~ ^[YyNn]$ ]]; then
+        break
+    fi
+done
 if [[ "$response" =~ ^[Yy]$ ]]; then
     jj bookmark create -r "latest(ancestors(@) & (merges() | ~empty()))" "$BRANCH_NAME"
 fi""", ""]
@@ -93,10 +106,23 @@ if [[ "$@" == *"--commit"* ]]; then
 else
     RES=$(jj diff --git "$@" | llm --system "$SYSTEM_PROMPT")
 fi
-echo "$RES"
-read -n 1 -r -p "Use description? (Y/n): " response
-echo
-response=${response:-Y}
+while true; do
+    echo "$RES"
+    read -n 1 -r -p "Use description? ([Y]es/[n]o/[e]dit): " response
+    echo
+    response=${response:-Y}
+    if [[ "$response" =~ ^[Ee]$ ]]; then
+        TMPFILE=$(mktemp)
+        echo "$RES" > "$TMPFILE"
+        ${EDITOR:-vi} "$TMPFILE"
+        RES=$(<"$TMPFILE")
+        RES=$(printf "%s" "$RES")
+        rm "$TMPFILE"
+    fi
+    if [[ "$response" =~ ^[YyNn]$ ]]; then
+        break
+    fi
+done
 if [[ "$response" =~ ^[Yy]$ ]]; then
     if [[ "$@" == *"--commit"* ]]; then
         jj commit -m "$RES"
