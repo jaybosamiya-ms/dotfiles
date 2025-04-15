@@ -60,6 +60,22 @@ ffm = [
   "--to", "latest(ancestors(@) & (merges() | ~empty()))"
 ]
 
+# Tiny convenience script to name a branch automatically based on an LLM looking
+# at the revisions since the last bookmark.
+llmb = ["util", "exec", "--", "bash", "-c", """
+#!/usr/bin/env bash
+set -euo pipefail
+SYSTEM_PROMPT="Generate a short, lowercase, hyphenated branch name that captures the core theme of these commits---no slashes, no prefixes like 'feat', just clear and concise wording."
+RES=$(jj log -r 'bookmarks()..@' --reversed | llm --system "$SYSTEM_PROMPT")
+BRANCH_NAME="jayb/$RES"
+echo "$BRANCH_NAME"
+read -n 1 -r -p "Use branch name? (Y/n): " response
+echo
+response=${response:-Y}
+if [[ "$response" =~ ^[Yy]$ ]]; then
+    jj bookmark create -r "latest(ancestors(@) & (merges() | ~empty()))" "$BRANCH_NAME"
+fi""", ""]
+
 # A tiny convenience script that adds an LLM description to the current
 # revision, for cases where a detailed description is not crucial, but having
 # some description is helpful. The final `""` makes sure things show up as $@ in
