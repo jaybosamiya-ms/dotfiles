@@ -83,7 +83,7 @@ fi""", ""]
 llm = ["util", "exec", "--", "bash", "-c", """
 #!/usr/bin/env bash
 set -euo pipefail
-SYSTEM_PROMPT="Generate a concise, single-line commit message for this diff, focusing on its intent rather than just describing the changed module. If it is a typo fix, prefix with 'typo fixup: '. Avoid extra phrasing like 'The commit message is:' and output only the commit message itself."
+SYSTEM_PROMPT="Generate a concise, single-line commit message for this diff, focusing on its intent rather than describing specific files or modules. Do not include prefixes like 'feat:', 'fix:', etc., unless it is a typo fix, in which case prefix with 'typo fixup: '. Keep the message terse, use abbreviations where appropriate (e.g., 'fs' for 'filesystem'), and avoid extra phrasing like 'The commit message is:'. Output only the commit message itself."
 if [[ "$@" == *"--commit"* ]]; then
     if [[ "$#" -ne 1 ]]; then
         echo "Error: --commit must be used exclusively."
