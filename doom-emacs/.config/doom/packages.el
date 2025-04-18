@@ -50,8 +50,8 @@
 
 (package! default-text-scale)
 
-; (package! rainbow-blocks)
-(package! rainbow-delimiters)
+(package! rainbow-blocks :recipe (:host github :repo "emacsmirror/rainbow-blocks"))
+; (package! rainbow-delimiters)
 (package! rainbow-identifiers)
 
 (package! rg)
