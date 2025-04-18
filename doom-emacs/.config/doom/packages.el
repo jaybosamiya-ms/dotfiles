@@ -50,7 +50,8 @@
 
 (package! default-text-scale)
 
-(package! rainbow-blocks)
+; (package! rainbow-blocks)
+(package! rainbow-delimiters)
 (package! rainbow-identifiers)
 
 (package! rg)
