@@ -14,6 +14,9 @@ private-commits = "description(regex:'^(wip|private|todo|donotpush):') | descrip
 # Whenever pushing with `jj git push --change`, rather than the default `push-` prefix, use a custom one.
 push-bookmark-prefix = "jayb/push-"
 
+# Do not require `--allow-new` when pushing new bookmarks
+push-new-bookmarks = true
+
 [revset-aliases]
 # Additionally, mark commits authored by other users as immutable too.
 #
