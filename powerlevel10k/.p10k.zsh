@@ -21,7 +21,7 @@
 if command -v jj >/dev/null; then
   function prompt_my_jj_commit() {
     local result
-    result=$((jj show @ --color=always --summary --template 'separate(" ", change_id.shortest(4), commit_id.shortest(4), if(empty,"(empty)")) ++ "\n"' | head -1; jj bookmark list -r 'coalesce(bookmarks() & descendants(@), heads(bookmarks() & ancestors(@)))' --color=always --template '" " ++ label("bookmark", name)') 2>/dev/null | tr -d '\n' | sed -e 's/\x1b\[1m/%B/g' -e 's/\x1b\[38;5;\([0-9]*\)m/%F{\1}/g' -e 's/\x1b\[0m/%f%b/g' -e 's/\x1b\[39m/%f/g')
+    result=$((jj show @ --color=always --summary --template 'separate(" ", change_id.shortest(4), commit_id.shortest(4), if(empty,"(empty)")) ++ "\n"' | head -1; jj bookmark list -r 'coalesce(bookmarks() & descendants(@), heads(bookmarks() & ancestors(@)))' --color=always --template '"\n " ++ label("bookmark", name)' | sort -u) 2>/dev/null | tr -d '\n' | sed -e 's/\x1b\[1m/%B/g' -e 's/\x1b\[38;5;\([0-9]*\)m/%F{\1}/g' -e 's/\x1b\[0m/%f%b/g' -e 's/\x1b\[39m/%f/g')
     # If there's no output, do nothing; otherwise, add a segment
     if [[ -z "${result}" ]]; then
     # Do nothing
