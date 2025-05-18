@@ -60,7 +60,33 @@ def compute_stats(numbers, percentiles=False):
     return stats
 
 
-def print_stats(label, numbers, show_values=False, show_percentiles=False):
+def compute_sparkline(numbers):
+    min_val = min(numbers)
+    max_val = max(numbers)
+    range_val = max_val - min_val
+    if range_val == 0:
+        range_val = 1  # Avoid division by zero
+
+    SPARKLINE_CHARS = {
+        "barchart": "▁▂▃▄▅▆▇█",
+        "shades": "░▒▓█",
+    }
+
+    SPARKLINE_CHAR = " " + SPARKLINE_CHARS["barchart"]
+
+    sparkline = []
+    for num in numbers:
+        norm = (num - min_val) / range_val
+        # Round to the nearest index, rather than directly
+        normalized = int(round(norm * (len(SPARKLINE_CHAR) - 1)))
+        sparkline.append(SPARKLINE_CHAR[normalized])
+
+    return "".join(sparkline)
+
+
+def print_stats(
+    label, numbers, show_values=False, show_percentiles=False, show_full_sparkline=False
+):
     stats = compute_stats(numbers, percentiles=show_percentiles)
     if label:
         print(f"Statistics for '{label}':")
@@ -71,6 +97,12 @@ def print_stats(label, numbers, show_values=False, show_percentiles=False):
         print(f"  {key}: {value}")
     if show_values:
         print(f"  Values: {numbers}")
+    if show_full_sparkline or len(numbers) <= 70:
+        print(f"  Sparkline: {compute_sparkline(numbers)}")
+    else:
+        print(
+            f"  Sparkline: {compute_sparkline(numbers[:20])} <...> {compute_sparkline(numbers[-20:])} (--full-sparkline to show all)"
+        )
     print()
 
 
@@ -104,6 +136,11 @@ def parse_arguments():
         action="store_true",
         help="Skip numbers directly adjacent to letters (e.g., 'base64')",
     )
+    parser.add_argument(
+        "--full-sparkline",
+        action="store_true",
+        help="Show full sparkline (default limits size of sparkline to a reasonable size)",
+    )
     return parser.parse_args()
 
 
@@ -118,18 +155,24 @@ def parse_skips(skip_args):
     return skips
 
 
-def find_alpha_adjacent(data, number_pattern):
-    # Match full tokens that contain a number
+def find_alpha_adjacent(data, number_pattern, skips):
     suspicious = []
     token_pattern = re.compile(r"\S+")
     for token in token_pattern.findall(data):
         matches = list(number_pattern.finditer(token))
         for m in matches:
+            num_str = m.group()
+            try:
+                num = float(num_str)
+            except ValueError:
+                continue
+            if num in skips:
+                continue
             start, end = m.span()
             left = token[start - 1] if start > 0 else ""
             right = token[end] if end < len(token) else ""
             if left.isalpha() or right.isalpha():
-                suspicious.append((m.group(), token))
+                suspicious.append((num_str, token))
     return suspicious
 
 
@@ -164,7 +207,7 @@ def main():
     group_pattern = re.compile(args.group_by) if args.group_by else None
 
     # Check for alpha-adjacent numbers (warn only if not skipping them)
-    alpha_adjacent_examples = find_alpha_adjacent(data, number_pattern)
+    alpha_adjacent_examples = find_alpha_adjacent(data, number_pattern, skips)
     if alpha_adjacent_examples and not args.skip_alpha_adjacent:
         print(
             "⚠️  Warning: Numbers directly adjacent to letters detected (e.g., 'base64'):"
@@ -173,7 +216,7 @@ def main():
             print(f"   - {num} in '{context}'")
         if len(alpha_adjacent_examples) > 5:
             print(f"   ...and {len(alpha_adjacent_examples) - 5} more.")
-        print("   Consider using --skip-alpha-adjacent to ignore these.\n")
+        print("   Consider using --skip-alpha-adjacent / --skip to ignore these.\n")
 
     def process_number_list(matches):
         return [n for n, _ in matches]
@@ -186,7 +229,7 @@ def main():
             print("No numbers found in input.")
             return
 
-        print_stats(None, numbers, args.values, args.percentiles)
+        print_stats(None, numbers, args.values, args.percentiles, args.full_sparkline)
         return
 
     # Grouped mode
@@ -214,12 +257,12 @@ def main():
         if not numbers:
             print("No numbers found in input.")
             return
-        print_stats(None, numbers, args.values, args.percentiles)
+        print_stats(None, numbers, args.values, args.percentiles, args.full_sparkline)
         return
 
     for group, nums in grouped_data.items():
         if nums:
-            print_stats(group, nums, args.values, args.percentiles)
+            print_stats(group, nums, args.values, args.percentiles, args.full_sparkline)
 
 
 if __name__ == "__main__":
