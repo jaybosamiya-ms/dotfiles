@@ -1,0 +1,118 @@
+#!/usr/bin/env python3
+
+import subprocess
+import tempfile
+import os
+import sys
+
+# Common C types and typedefs
+C_TYPES = [
+    "char",
+    "signed char",
+    "unsigned char",
+    "short",
+    "unsigned short",
+    "int",
+    "unsigned int",
+    "long",
+    "unsigned long",
+    "long long",
+    "unsigned long long",
+    "float",
+    "double",
+    "void *",
+    "size_t",
+    "ssize_t",
+    "ptrdiff_t",
+    "intmax_t",
+    "uintmax_t",
+]
+
+# Mapping from C type to equivalent Rust type
+C_TO_RUST = {
+    "char": "i8 or u8 (platform dependent)",
+    "signed char": "i8",
+    "unsigned char": "u8",
+    "short": "i16",
+    "unsigned short": "u16",
+    "int": "i32",
+    "unsigned int": "u32",
+    "long": "i64",
+    "unsigned long": "u64",
+    "long long": "i64",
+    "unsigned long long": "u64",
+    "float": "f32",
+    "double": "f64",
+    "void *": "*mut core::ffi::c_void",
+    "size_t": "usize",
+    "ssize_t": "isize",
+    "ptrdiff_t": "isize",
+    "intmax_t": "i64",
+    "uintmax_t": "u64",
+}
+
+C_TEMPLATE = """
+#include <stdio.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <sys/types.h>
+
+int main() {{
+{checks}
+    return 0;
+}}
+"""
+
+
+def make_check_lines(input_type):
+    lines = []
+    for t in C_TYPES:
+        lines.append(
+            f'    if (__builtin_types_compatible_p(typeof(({input_type})0), {t})) printf("{t}\\n");'
+        )
+    return "\n".join(lines)
+
+
+def get_compatible_types(input_type):
+    code = C_TEMPLATE.format(checks=make_check_lines(input_type))
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        c_file = os.path.join(tmpdir, "check_type.c")
+        exe_file = os.path.join(tmpdir, "check_type.out")
+
+        with open(c_file, "w") as f:
+            f.write(code)
+
+        result = subprocess.run(
+            ["gcc", c_file, "-o", exe_file], capture_output=True, text=True
+        )
+        if result.returncode != 0:
+            print("Compilation failed:")
+            print(result.stderr)
+            return []
+
+        run = subprocess.run([exe_file], capture_output=True, text=True)
+        return [
+            line.strip() for line in run.stdout.strip().splitlines() if line.strip()
+        ]
+
+
+def print_mappings(input_type):
+    matches = get_compatible_types(input_type)
+
+    if not matches:
+        print(f"No compatible types found for '{input_type}'")
+        return
+
+    print(f"{input_type} is compatible with:")
+    for ctype in matches:
+        rust = C_TO_RUST.get(ctype, "Unknown")
+        print(f"  C: {ctype:22}  Rust: {rust}")
+
+
+if __name__ == "__main__":
+    if len(sys.argv) != 2:
+        print(f"Usage: {sys.argv[0]} <C type>")
+        sys.exit(1)
+
+    print_mappings(sys.argv[1])
