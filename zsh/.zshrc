@@ -239,7 +239,7 @@ case "$OSTYPE" in
         alias ls='ls -h -G --color=auto' # Human readable file sizes, and color :)
         ;;
     linux*)
-        alias ls='ls -h --color=tty' # Human readable file sizes, and color :)
+        alias ls='ls -h --color=tty -v' # Human readable file sizes, color, and auto-sorting based on numerals :)
         ;;
     *)
         echo "Unknown OS type $OSTYPE"
