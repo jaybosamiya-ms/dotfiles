@@ -559,9 +559,15 @@ a warning message and leave it as-is. ARGS accepts the syntax as in `map!'."
 
 ;; Set up for LSP mode across all languages.
 (progn
-  ;; Disable the annoying symbol-highlighting that LSP does by default
   (setq-hook! lsp-mode
-    lsp-enable-symbol-highlighting nil))
+    ;; Disable the annoying symbol-highlighting that LSP does by default
+    lsp-enable-symbol-highlighting nil
+    ;; Stop LSP from attempting to connect to semgrep things.
+    lsp-semgrep-languages nil))
+
+;; Stop LSP from attempting to connect to semgrep things.
+(use-package lsp-semgrep
+  :config (setq lsp-semgrep-languages nil))
 
 ;; Verus language specific things
 (use-package! verus-mode
