@@ -115,6 +115,10 @@
 (package! yap
   :recipe (:host github :repo "meain/yap" :files ("*.el")))
 
+;; Syntax highlighting for HotCRP reviews
+(package! hotcrp-review-mode
+  :recipe (:host github :repo "jaybosamiya/hotcrp-review-mode.el"))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;; To install a package with Doom you must declare them here and run 'doom sync'
