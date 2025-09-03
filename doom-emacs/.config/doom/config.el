@@ -1006,3 +1006,8 @@ between `All locations` and `Errors only`."
   :config
   ;; Add the Rust `target/` directory to globally ignored directories
   (add-to-list 'projectile-globally-ignored-directories "target"))
+
+;; Dired configuration
+(use-package! dired
+  :bind (:map dired-mode-map
+              ("I" . dired-kill-subdir)))
