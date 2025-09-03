@@ -1000,3 +1000,9 @@ between `All locations` and `Errors only`."
       (flycheck-error-list-set-filter flycheck-navigation-minimum-level)
       (message "Flycheck navigation level set to: %s" flycheck-navigation-minimum-level)))
   :bind ("C-c ! !" . flycheck-switch-min-level))
+
+;; Projectile configuration
+(use-package! projectile
+  :config
+  ;; Add the Rust `target/` directory to globally ignored directories
+  (add-to-list 'projectile-globally-ignored-directories "target"))
