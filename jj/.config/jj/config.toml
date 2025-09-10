@@ -48,6 +48,13 @@ concat(
 '''
 
 [aliases]
+# Convenience way of looking at only stuff related to the current branch. Use
+# `jj log` for the full "normal" log.
+l = [
+  "log", "-r",
+  "ancestors(trunk()..@, 2) | descendants(@) | trunk()"
+]
+
 # Fast forward my latest bookmark on the current branch to the latest non-empty
 # (or merge) commit.
 ff = [
