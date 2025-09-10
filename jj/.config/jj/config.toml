@@ -11,9 +11,6 @@ pager = "less -FR"
 # Prevent pushing work in progress or anything explicitly labeled "private"
 private-commits = "description(regex:'^(wip|private|todo|donotpush):') | description(regex:'\\[(wip|private|todo|donotpush)\\]')"
 
-# Whenever pushing with `jj git push --change`, rather than the default `push-` prefix, use a custom one.
-push-bookmark-prefix = "jayb/push-"
-
 # Do not require `--allow-new` when pushing new bookmarks
 push-new-bookmarks = true
 
@@ -29,6 +26,9 @@ push-new-bookmarks = true
 "immutable_heads()" = "builtin_immutable_heads() | (trunk().. & ~mine())"
 
 [templates]
+# Whenever pushing with `jj git push --change`, rather than the default `push-` prefix, use a custom one.
+git_push_bookmark = '"jayb/push-" ++ change_id.short()'
+
 # Add the diff as part of when attempting to draft a commit description
 draft_commit_description = '''
 concat(
