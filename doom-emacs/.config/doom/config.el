@@ -611,7 +611,7 @@ a warning message and leave it as-is. ARGS accepts the syntax as in `map!'."
         lsp-rust-analyzer-display-lifetime-elision-hints-use-parameter-names nil
         lsp-rust-analyzer-display-closure-return-type-hints t
         lsp-rust-analyzer-display-parameter-hints nil
-        lsp-rust-analyzer-display-reborrow-hints nil)
+        lsp-rust-analyzer-display-reborrow-hints "never")
   ;; Set up a custom inlay face, to distinguish inlays from comments
   (custom-set-faces! '(lsp-rust-analyzer-inlay-face
                        ;; Default is just `font-lock-comment-face` which can be confusing
