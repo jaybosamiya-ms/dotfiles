@@ -9,7 +9,7 @@ pager = "less -FR"
 
 [git]
 # Prevent pushing work in progress or anything explicitly labeled "private"
-private-commits = "description(regex:'^(wip|private|todo|donotpush):') | description(regex:'\\[(wip|private|todo|donotpush)\\]')"
+private-commits = "(description(regex:'^(wip|private|todo|donotpush):') | description(regex:'\\[(wip|private|todo|donotpush)\\]')) ~ bookmarks('wip')"
 
 # Do not require `--allow-new` when pushing new bookmarks
 push-new-bookmarks = true
