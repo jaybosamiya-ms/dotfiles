@@ -14,6 +14,20 @@ private-commits = "(description(regex:'^(wip|private|todo|donotpush):') | descri
 # Do not require `--allow-new` when pushing new bookmarks
 push-new-bookmarks = true
 
+[merge-tools.difft]
+# Allow `jj diff --tool=difft` to allow difftastic view (`cargo binstall difftastic`)
+diff-args = ["--color=always", "--display=inline", "$left", "$right"]
+
+[merge-tools.diffts]
+# Allow `jj diff --tool=diffts` to allow difftastic view in side-by-side mode (`cargo binstall difftastic`)
+program = "difft"
+diff-args = ["--color=always", "--display=side-by-side-show-both", "$left", "$right"]
+
+[merge-tools.delta]
+# Allow `jj diff --tool=delta` to allow git-delta view (`cargo binstall git-delta`)
+diff-args = ["$left", "$right"]
+diff-expected-exit-codes = [0, 1]
+
 [revset-aliases]
 # Additionally, mark commits authored by other users as immutable too.
 #
@@ -48,6 +62,12 @@ concat(
 '''
 
 [aliases]
+# Convenience alias for difftastic, git diff, git-delta diff
+difft = ["diff", "--tool=difft"]
+diffts = ["diff", "--tool=diffts"]
+diffg = ["diff", "--git"]
+diffd = ["diff", "--tool=delta"]
+
 # Convenience way of looking at only stuff related to the current branch. Use
 # `jj log` for the full "normal" log.
 l = [
