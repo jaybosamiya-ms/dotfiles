@@ -58,6 +58,7 @@
 # Requires difftastic being installed (eg: `cargo install --locked difftastic`)
 [diff]
     tool = difftastic
+    colormoved = dimmed-zebra
 [difftool]
     prompt = false
 [difftool "difftastic"]
