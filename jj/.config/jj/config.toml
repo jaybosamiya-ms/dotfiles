@@ -68,6 +68,9 @@ diffts = ["diff", "--tool=diffts"]
 diffg = ["diff", "--git"]
 diffd = ["diff", "--tool=delta"]
 
+# Convenience alias to resolve conflicts via mergiraf (cargo binstall mergiraf)
+resolvem = ["resolve", "--tool=mergiraf"]
+
 # Convenience way of looking at only stuff related to the current branch. Use
 # `jj log` for the full "normal" log.
 l = [
