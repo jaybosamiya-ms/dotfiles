@@ -4,6 +4,9 @@ local config = wezterm.config_builder()
 config.default_domain = 'WSL:Ubuntu'
 config.front_end = "OpenGL"
 
+-- Since I am only using this for WSL, the default of CRLF on Windows is somewhat annoying since it leads to double-newline. Changing it to just CR does the right thing.
+config.canonicalize_pasted_newlines = "CarriageReturn"
+
 config.window_decorations = "RESIZE"
 
 config.initial_cols = 120
@@ -52,5 +55,20 @@ for dir, key in pairs(directions) do
     action = wezterm.action.ActivatePaneDirection(dir),
   })
 end
+
+-- Add mouse bindings to disable plain-click link opening and enable Ctrl-click
+-- instead
+config.mouse_bindings = {
+  {
+    event = { Up = { streak = 1, button = 'Left' } },
+    mods = 'NONE',
+    action = wezterm.action.Nop,
+  },
+  {
+    event = { Up = { streak = 1, button = 'Left' } },
+    mods = 'CTRL',
+    action = wezterm.action.OpenLinkAtMouseCursor,
+  },
+}
 
 return config
