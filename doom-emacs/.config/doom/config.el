@@ -252,6 +252,8 @@ a warning message and leave it as-is. ARGS accepts the syntax as in `map!'."
   (setq +default-want-RET-continue-comments nil)
   ;; Tab should indent the line independent of wherever you are on it.
   (setq tab-always-indent t)
+  ;; Don't confirm before killing Emacs when `C-x C-c`.
+  (setq confirm-kill-emacs nil)
   ;; Switch C-a and C-e to Emacs defaults, while setting home/end to DoomEmacs's
   ;; default C-a and C-e.
   (map! "C-a" nil "C-e" nil)
