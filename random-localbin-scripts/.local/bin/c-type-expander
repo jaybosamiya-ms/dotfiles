@@ -1,0 +1,926 @@
+#!/usr/bin/env python3
+"""
+Find and display the expanded layout of a C struct or typedef using the preprocessor.
+
+Usage: c-type-expander <struct_name> [search_paths...]
+"""
+
+import sys
+import os
+import subprocess
+import tempfile
+import re
+import shlex
+from pathlib import Path
+
+
+def find_struct_in_file(file_path, struct_name):
+    """Check if a struct definition exists in the given file."""
+    try:
+        with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+            content = f.read()
+            # Look for struct definition patterns
+            patterns = [
+                rf'struct\s+{re.escape(struct_name)}\s*{{',
+                rf'typedef\s+struct\s+{re.escape(struct_name)}\s*{{',
+                rf'typedef\s+struct\s+{{[^}}]*}}\s*{re.escape(struct_name)}\s*;',
+            ]
+            for pattern in patterns:
+                if re.search(pattern, content):
+                    return True
+    except Exception:
+        pass
+    return False
+
+
+def find_struct_files_with_rg(struct_name, search_paths):
+    """Use ripgrep to quickly find files containing struct definitions."""
+    try:
+        # Build regex pattern for struct definitions
+        # Look for: struct <name> (followed by { on same or next line)
+        # Use word boundary to avoid partial matches
+        pattern = rf'\bstruct\s+{re.escape(struct_name)}\b'
+
+        # Run ripgrep with multiline support to catch definitions where { is on next line
+        cmd = ['rg', '-l', '--type=c', '-U', pattern] + search_paths
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+
+        if result.returncode == 0:
+            files = [Path(line.strip()) for line in result.stdout.strip().split('\n') if line.strip()]
+            # Filter to only files that actually have the struct definition (not just usage)
+            # by verifying the file contains the pattern with find_struct_in_file
+            verified_files = [f for f in files if find_struct_in_file(f, struct_name)]
+            return verified_files
+        return []
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        # Fallback to manual search if rg not available or times out
+        return None
+
+
+def find_typedef_in_file(file_path, type_name):
+    """Check if a typedef definition exists in the given file."""
+    try:
+        with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+            content = f.read()
+            # Look for typedef patterns
+            # Pattern 1: Simple typedef with optional pointer (typedef <type> *name; or typedef <type> name;)
+            # Pattern 2: Function pointer typedef (typedef <ret> (*name) (<params>);)
+            # Pattern 3: Function type typedef (typedef <ret> name(<params>);)
+            # Pattern 4: glibc __STD_TYPE macro pattern (__STD_TYPE <type> name;)
+            patterns = [
+                rf'typedef\s+[^;]+\s*\*?\s*{re.escape(type_name)}\s*;',  # Simple typedef with optional *
+                rf'typedef\s+[^(]+\(\s*\*\s*{re.escape(type_name)}\s*\)',  # Function pointer typedef
+                rf'typedef\s+\w+\s+{re.escape(type_name)}\s*\(',  # Function type typedef
+                rf'__STD_TYPE\s+[^;]+\s+{re.escape(type_name)}\s*;',  # glibc __STD_TYPE pattern
+            ]
+            for pattern in patterns:
+                if re.search(pattern, content):
+                    return True
+    except Exception:
+        pass
+    return False
+
+
+def find_typedef_files_with_rg(type_name, search_paths):
+    """Use ripgrep to quickly find files containing typedef definitions."""
+    try:
+        # Build regex patterns for typedef/define definitions
+        # Match: typedef ... <name>; or typedef ... (*<name>) or typedef ... <name>(
+        # Also match: __STD_TYPE ... <name>; and #define <name> ...
+        patterns = [
+            rf'typedef\s+.*\b{re.escape(type_name)}\b',
+            rf'__STD_TYPE\s+.*\b{re.escape(type_name)}\b',
+            rf'#\s*define\s+{re.escape(type_name)}\b',
+        ]
+
+        all_files = set()
+        for pattern in patterns:
+            # Run ripgrep
+            cmd = ['rg', '-l', '--type=c', pattern] + search_paths
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+
+            if result.returncode == 0:
+                files = [Path(line.strip()) for line in result.stdout.strip().split('\n') if line.strip()]
+                all_files.update(files)
+
+        return list(all_files) if all_files else []
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        # Fallback to manual search if rg not available or times out
+        return None
+
+
+def find_header_files(search_paths):
+    """Find all .h header files in the given search paths."""
+    header_files = []
+    for search_path in search_paths:
+        path = Path(search_path)
+        if path.is_file() and path.suffix == '.h':
+            header_files.append(path)
+        elif path.is_dir():
+            header_files.extend(path.rglob('*.h'))
+    return header_files
+
+
+def get_system_include_paths():
+    """Get system include paths from gcc."""
+    try:
+        result = subprocess.run(
+            ['gcc', '-E', '-Wp,-v', '-xc', '/dev/null'],
+            capture_output=True,
+            text=True,
+            stderr=subprocess.PIPE
+        )
+        # GCC outputs this to stderr
+        output = result.stderr
+        paths = []
+        in_include_section = False
+        for line in output.splitlines():
+            if '#include <...> search starts here:' in line:
+                in_include_section = True
+                continue
+            if 'End of search list' in line:
+                break
+            if in_include_section:
+                path = line.strip()
+                if path and os.path.isdir(path):
+                    paths.append(path)
+        return paths if paths else ['/usr/include', '/usr/local/include']
+    except Exception:
+        # Fallback to common paths
+        return ['/usr/include', '/usr/local/include']
+
+
+def get_header_name(header_file, search_paths):
+    """Get the relative header name for #include directive."""
+    header_path = Path(header_file)
+
+    # Handle bits/ headers - they should never be included directly
+    # Try to detect the correct public header by reading the error message
+    header_str = str(header_path)
+    if '/bits/' in header_str:
+        try:
+            with open(header_path, 'r', encoding='utf-8', errors='ignore') as f:
+                # Read first ~50 lines to find the error directive
+                for _ in range(50):
+                    line = f.readline()
+                    if not line:
+                        break
+                    # Look for: # error "Never include <bits/foo.h> directly; use <bar.h> instead."
+                    match = re.search(r'error.*use\s+<([^>]+)>\s+instead', line)
+                    if match:
+                        return match.group(1)
+        except Exception:
+            pass
+
+        # Fallback mapping for common cases if we couldn't parse the error
+        bits_mapping = {
+            'bits/socket.h': 'sys/socket.h',
+            'bits/stat.h': 'sys/stat.h',
+            'bits/types.h': 'sys/types.h',
+            'bits/time.h': 'time.h',
+            'bits/fcntl.h': 'fcntl.h',
+        }
+
+        for bits_path, public_path in bits_mapping.items():
+            if header_str.endswith(bits_path):
+                return public_path
+
+    # Try to find the header in one of the search paths
+    for search_path in search_paths:
+        search_path = Path(search_path)
+        try:
+            if header_path.is_relative_to(search_path):
+                rel_path = header_path.relative_to(search_path)
+                return str(rel_path)
+        except (ValueError, AttributeError):
+            # is_relative_to not available in older Python
+            try:
+                rel_path = header_path.relative_to(search_path)
+                return str(rel_path)
+            except ValueError:
+                pass
+
+    # Fallback to basename if not in search paths
+    return header_path.name
+
+
+def normalize_struct(struct_text):
+    """Normalize struct text for comparison by removing extra whitespace."""
+    # Normalize whitespace while preserving structure
+    normalized = re.sub(r'\s+', ' ', struct_text.strip())
+    return normalized
+
+
+def annotate_struct_with_typedef_comments(struct_text, typedef_final_types):
+    """Add inline comments to struct fields showing final typedef types."""
+    if not typedef_final_types:
+        return struct_text
+
+    lines = struct_text.split('\n')
+    result_lines = []
+
+    for line in lines:
+        # Check if this is a field line (contains a semicolon and is indented)
+        if ';' in line and line.strip() and not line.strip().startswith('struct '):
+            # Extract the type from the field declaration
+            # Pattern: <type> <name>; or <type> *<name>; or <type> <name>[...];
+            field_stripped = line.strip()
+
+            # Try to extract the type (first token before * or whitespace)
+            tokens = field_stripped.split()
+            if tokens:
+                field_type = tokens[0]
+
+                # Check if this type has a final type mapping
+                if field_type in typedef_final_types:
+                    final_type = typedef_final_types[field_type]
+                    # Add inline comment before the semicolon
+                    if '/*' not in line:  # Only add if no comment exists
+                        # Find the position of the semicolon
+                        semicolon_pos = line.rfind(';')
+                        if semicolon_pos != -1:
+                            line = line[:semicolon_pos] + f' /* {final_type} */' + line[semicolon_pos:]
+
+        result_lines.append(line)
+
+    return '\n'.join(result_lines)
+
+
+def expand_struct_single(struct_name, header_file, search_paths):
+    """Expand a single struct definition using the C preprocessor (non-recursive)."""
+    header_name = get_header_name(header_file, search_paths)
+
+    # Create a temporary C file that references the struct
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.c', delete=False) as tmp:
+        tmp_path = tmp.name
+        tmp.write(f'#include <{header_name}>\n')
+        tmp.write(f'struct {struct_name} __struct_instance;\n')
+
+    try:
+        # Get all system include paths from gcc
+        all_include_paths = get_system_include_paths()
+
+        # Add the directory containing the header file to include paths
+        # This allows relative includes within that header to work
+        header_dir = str(Path(header_file).parent)
+        if header_dir not in all_include_paths:
+            all_include_paths.insert(0, header_dir)
+
+        # Build gcc command with -I flags for all include paths
+        gcc_cmd = ['gcc', '-E']
+        for path in all_include_paths:
+            gcc_cmd.extend(['-I', path])
+        gcc_cmd.append(tmp_path)
+
+        # Run the preprocessor with all include paths
+        result = subprocess.run(
+            gcc_cmd,
+            capture_output=True,
+            text=True
+        )
+
+        if result.returncode != 0:
+            return None, result.stderr
+
+        # Parse the output to find the struct definition
+        output = result.stdout
+
+        # Extract the expanded struct definition
+        # Look for the struct definition in the preprocessed output
+        struct_pattern = rf'struct\s+{re.escape(struct_name)}\s*{{[^}}]*}}'
+        matches = list(re.finditer(struct_pattern, output, re.DOTALL))
+
+        if matches:
+            # Get the last match (most expanded version)
+            expanded = matches[-1].group(0)
+            # Clean up the output for readability
+            expanded = re.sub(r'\s+', ' ', expanded)
+            expanded = re.sub(r'\s*{\s*', ' {\n  ', expanded)
+            expanded = re.sub(r'\s*;\s*', ';\n  ', expanded)
+            expanded = re.sub(r'\s*}\s*', '\n}', expanded)
+            return expanded, None
+
+        return None, "Struct definition not found in preprocessed output"
+
+    finally:
+        os.unlink(tmp_path)
+
+
+def extract_struct_fields(struct_text):
+    """Extract field definitions from a struct."""
+    # Remove the struct declaration line
+    match = re.search(r'struct\s+\w+\s*{(.+)}', struct_text, re.DOTALL)
+    if not match:
+        return []
+
+    fields_text = match.group(1)
+    # Split by semicolon and clean up
+    fields = [f.strip() for f in fields_text.split(';') if f.strip()]
+    return fields
+
+
+def find_struct_types_in_fields(fields):
+    """Find all struct types referenced in field definitions."""
+    struct_types = []
+    for field in fields:
+        # Look for 'struct <name>' pattern in the field
+        # Match patterns like: "struct foo bar", "struct foo *bar", "struct foo bar[10]"
+        pattern = r'struct\s+(\w+)\s+'
+        matches = re.findall(pattern, field)
+        struct_types.extend(matches)
+    return list(set(struct_types))  # Remove duplicates
+
+
+def find_typedefs_in_fields(fields):
+    """Find potential typedef names in field definitions."""
+    typedefs = []
+    for field in fields:
+        # Skip fields that explicitly use 'struct' keyword
+        if 'struct ' in field:
+            continue
+
+        # Extract type names from field declarations
+        # Match patterns like: "type_name field_name", "type_name *field_name", "type_name field[10]"
+        # Remove common C keywords that aren't typedefs
+        field = field.strip()
+
+        # Skip empty fields
+        if not field:
+            continue
+
+        # Common pattern: <type> <name> or <type> *<name> or <type> <name>[...]
+        # Extract the first token as potential type
+        tokens = field.split()
+        if len(tokens) >= 2:
+            type_name = tokens[0]
+
+            # Filter out C keywords and common types
+            c_keywords = {
+                'const', 'volatile', 'static', 'extern', 'register', 'auto',
+                'void', 'char', 'short', 'int', 'long', 'float', 'double',
+                'signed', 'unsigned', 'enum', 'union'
+            }
+
+            if type_name not in c_keywords:
+                # Heuristic: typedef names often start with __ or end with _t
+                # or contain uppercase letters (like size_t, off_t, __kernel_off_t)
+                if (type_name.startswith('__') or
+                    type_name.endswith('_t') or
+                    any(c.isupper() for c in type_name)):
+                    typedefs.append(type_name)
+
+    return list(set(typedefs))  # Remove duplicates
+
+
+def expand_struct_recursive(struct_name, search_paths, visited_structs=None, visited_typedefs=None, depth=0, max_depth=10, typedef_final_types=None):
+    """Recursively expand a struct and all nested struct types and typedefs."""
+    if visited_structs is None:
+        visited_structs = set()
+    if visited_typedefs is None:
+        visited_typedefs = set()
+    if typedef_final_types is None:
+        typedef_final_types = {}  # Maps typedef name -> final type
+
+    # Prevent infinite recursion
+    if struct_name in visited_structs or depth >= max_depth:
+        if struct_name in visited_structs:
+            return [f"struct {struct_name} {{ /* circular reference */ }}"], None, typedef_final_types
+        else:
+            return [f"struct {struct_name} {{ /* max depth reached */ }}"], None, typedef_final_types
+
+    visited_structs.add(struct_name)
+
+    # Try to use ripgrep first for faster searching
+    header_files = find_struct_files_with_rg(struct_name, search_paths)
+
+    # Fallback to manual search if ripgrep not available
+    if header_files is None:
+        header_files = find_header_files(search_paths)
+        # Filter to only files that contain the struct
+        header_files = [h for h in header_files if find_struct_in_file(h, struct_name)]
+
+    for header in header_files:
+        if 'musl' in str(header):  # Skip musl by default
+            continue
+
+        # Expand this struct
+        expanded, error = expand_struct_single(struct_name, header, search_paths)
+        if not expanded:
+            continue
+
+        # Extract fields and find nested types
+        fields = extract_struct_fields(expanded)
+        nested_structs = find_struct_types_in_fields(fields)
+        nested_typedefs = find_typedefs_in_fields(fields)
+
+        # Recursively expand typedefs found in fields first to populate typedef_final_types
+        typedef_results = []
+        for typedef_name in nested_typedefs:
+            if typedef_name not in visited_typedefs:
+                visited_typedefs.add(typedef_name)
+                # expand_typedef_chain manages its own visited set, so pass a fresh one
+                chain_accumulator = []
+                typedef_chain, typedef_error = expand_typedef_chain(typedef_name, search_paths, set(), chain_accumulator)
+                if typedef_chain:
+                    # Extract the final type from the last line in the chain
+                    last_line = typedef_chain[-1]
+                    final_type = None
+
+                    # For #define, the final value is after the macro name
+                    if last_line.startswith('#define'):
+                        parts = last_line.split(None, 2)
+                        if len(parts) >= 3:
+                            final_type = parts[2]
+                    # For typedef, extract the base type
+                    elif last_line.startswith('typedef'):
+                        # Handle different typedef patterns
+                        if '(*' in last_line:
+                            # Function pointer: extract return type
+                            match = re.search(r'typedef\s+(\S+)', last_line)
+                            if match:
+                                final_type = match.group(1)
+                        else:
+                            # Simple typedef: extract base type
+                            match = re.search(r'typedef\s+(.+?)\s+\*?\s*\w+\s*;', last_line)
+                            if match:
+                                final_type = match.group(1).strip()
+
+                    # Store the final type for inline comments (do this for all chains)
+                    if final_type:
+                        typedef_final_types[typedef_name] = final_type
+
+                    # Add summary comment at the top showing the full chain (only if chain > 1)
+                    typedef_result = []
+                    if len(chain_accumulator) > 1 and final_type:
+                        summary = f"/* {chain_accumulator[0]} -> {final_type} */"
+                        typedef_result.append(summary)
+
+                    typedef_result.extend(typedef_chain)
+                    typedef_results.append('\n'.join(typedef_result))
+
+        # Annotate the struct with inline comments for typedef final types
+        annotated_struct = annotate_struct_with_typedef_comments(expanded, typedef_final_types)
+
+        # Build the result starting with the annotated struct
+        result = [annotated_struct]
+
+        # Recursively expand nested structs
+        for nested_struct in nested_structs:
+            if nested_struct not in visited_structs:
+                nested_result, nested_error, nested_typedef_final_types = expand_struct_recursive(
+                    nested_struct, search_paths, visited_structs, visited_typedefs, depth + 1, max_depth, typedef_final_types
+                )
+                if nested_result:
+                    result.extend(nested_result)
+                # Merge typedef final types
+                typedef_final_types.update(nested_typedef_final_types)
+
+        # Add typedef chain results
+        result.extend(typedef_results)
+
+        return result, None, typedef_final_types
+
+    return None, f"Struct {struct_name} not found", typedef_final_types
+
+
+def expand_struct(struct_name, header_file, search_paths):
+    """Expand the struct definition recursively using the C preprocessor."""
+    # Get all system include paths
+    all_include_paths = get_system_include_paths()
+    header_dir = str(Path(header_file).parent)
+    if header_dir not in all_include_paths:
+        all_include_paths.insert(0, header_dir)
+
+    # Use recursive expansion
+    results, error, typedef_final_types = expand_struct_recursive(struct_name, all_include_paths)
+    if results:
+        # Join all struct definitions with newlines
+        return '\n\n'.join(results), None
+    return None, error
+
+
+def expand_typedef_chain(type_name, search_paths, visited=None, chain_accumulator=None):
+    """Recursively expand a typedef chain to its base type."""
+    if visited is None:
+        visited = set()
+    if chain_accumulator is None:
+        chain_accumulator = []
+
+    # Prevent infinite recursion
+    if type_name in visited:
+        return [f"typedef (circular reference) {type_name};"], None
+    visited.add(type_name)
+    chain_accumulator.append(type_name)
+
+    # Try to use ripgrep first for faster searching
+    header_files = find_typedef_files_with_rg(type_name, search_paths)
+
+    # Fallback to manual search if ripgrep not available
+    if header_files is None:
+        header_files = find_header_files(search_paths)
+        # Filter to only files that contain the typedef
+        header_files = [h for h in header_files if find_typedef_in_file(h, type_name)]
+
+    for header in header_files:
+        if 'musl' in str(header):  # Skip musl by default
+            continue
+
+        # Read the typedef from the file
+        try:
+            with open(header, 'r', encoding='utf-8', errors='ignore') as f:
+                content = f.read()
+
+                # First, try to match glibc __STD_TYPE macro pattern: __STD_TYPE <type> name;
+                std_type_pattern = rf'__STD_TYPE\s+(.+?)\s+{re.escape(type_name)}\s*;'
+                match = re.search(std_type_pattern, content)
+                if match:
+                    base_type = match.group(1).strip()
+                    chain = [f"typedef {base_type} {type_name};"]
+
+                    # Recursively expand the base type
+                    if base_type.startswith('__') and not base_type.startswith('__typeof__'):
+                        sub_chain, error = expand_typedef_chain(base_type, search_paths, visited, chain_accumulator)
+                        if sub_chain:
+                            chain.extend(sub_chain)
+
+                    return chain, None
+
+                # Try #define macro pattern: #define __MACRO_NAME value
+                define_pattern = rf'#\s*define\s+{re.escape(type_name)}\s+(.+?)(?:\s*\/\*.*?\*\/\s*)?$'
+                match = re.search(define_pattern, content, re.MULTILINE)
+                if match:
+                    value = match.group(1).strip()
+                    # Remove trailing comments
+                    value = re.sub(r'/\*.*?\*/', '', value).strip()
+                    value = re.sub(r'//.*$', '', value).strip()
+
+                    chain = [f"#define {type_name} {value}"]
+
+                    # If the value is another type-like macro, recursively expand it
+                    # Common patterns: __U32_TYPE, __UQUAD_TYPE, __SYSCALL_ULONG_TYPE, etc.
+                    if value.startswith('__') and not value.startswith('__typeof__'):
+                        # Check if it looks like a type macro (all caps with _TYPE or ends with _t)
+                        if '_TYPE' in value or value.endswith('_t'):
+                            sub_chain, error = expand_typedef_chain(value, search_paths, visited, chain_accumulator)
+                            if sub_chain:
+                                chain.extend(sub_chain)
+
+                    return chain, None
+
+                # Look for the typedef definition
+                # Try function pointer pattern first: typedef <ret> (*name) (<params>);
+                func_ptr_pattern = rf'typedef\s+(.+?)\s*\(\s*\*\s*{re.escape(type_name)}\s*\)\s*\(([^)]*)\)\s*;'
+                match = re.search(func_ptr_pattern, content)
+                if match:
+                    ret_type = match.group(1).strip()
+                    params = match.group(2).strip()
+                    chain = [f"typedef {ret_type} (*{type_name}) ({params});"]
+
+                    # Check if return type is itself a typedef
+                    if ret_type.startswith('__') and not ret_type.startswith('__typeof__'):
+                        sub_chain, error = expand_typedef_chain(ret_type, search_paths, visited, chain_accumulator)
+                        if sub_chain:
+                            chain.extend(sub_chain)
+
+                    return chain, None
+
+                # Try function type pattern: typedef <ret> name(<params>);
+                func_type_pattern = rf'typedef\s+(\w+)\s+{re.escape(type_name)}\s*\(([^)]*)\)\s*;'
+                match = re.search(func_type_pattern, content)
+                if match:
+                    ret_type = match.group(1).strip()
+                    params = match.group(2).strip()
+                    chain = [f"typedef {ret_type} {type_name}({params});"]
+
+                    # Check if return type is itself a typedef
+                    if ret_type.startswith('__') and not ret_type.startswith('__typeof__'):
+                        sub_chain, error = expand_typedef_chain(ret_type, search_paths, visited, chain_accumulator)
+                        if sub_chain:
+                            chain.extend(sub_chain)
+
+                    return chain, None
+
+                # Try simple typedef pattern: typedef <type> *name; or typedef <type> name;
+                # Use word boundary to ensure we match the exact type name
+                simple_pattern = rf'typedef\s+(.+?)\s*(\*?)\s*\b{re.escape(type_name)}\b\s*;'
+                match = re.search(simple_pattern, content)
+                if match:
+                    base_type = match.group(1).strip()
+                    pointer = match.group(2).strip()
+
+                    if pointer:
+                        chain = [f"typedef {base_type} {pointer}{type_name};"]
+                    else:
+                        chain = [f"typedef {base_type} {type_name};"]
+
+                    # Check if base_type is itself a typedef
+                    if base_type.startswith('__') and not base_type.startswith('__typeof__'):
+                        sub_chain, error = expand_typedef_chain(base_type, search_paths, visited, chain_accumulator)
+                        if sub_chain:
+                            chain.extend(sub_chain)
+
+                    return chain, None
+        except Exception as e:
+            continue
+
+    return None, f"Typedef {type_name} not found"
+
+
+def expand_typedef(type_name, header_file, search_paths):
+    """Expand a typedef definition using the C preprocessor and compiler."""
+    header_name = get_header_name(header_file, search_paths)
+
+    # Create a temporary C file that uses __typeof__ to get the underlying type
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.c', delete=False) as tmp:
+        tmp_path = tmp.name
+        tmp.write(f'#include <{header_name}>\n')
+        tmp.write(f'typedef __typeof__({type_name}) __expanded_type;\n')
+        tmp.write(f'__expanded_type __type_instance;\n')
+
+    try:
+        # Get all system include paths from gcc
+        all_include_paths = get_system_include_paths()
+
+        # Add the directory containing the header file to include paths
+        header_dir = str(Path(header_file).parent)
+        if header_dir not in all_include_paths:
+            all_include_paths.insert(0, header_dir)
+
+        # Build gcc command with -I flags for all include paths
+        # Use -fdump-tree-original to get type information
+        gcc_cmd = ['gcc', '-S', '-o', '/dev/null']
+        for path in all_include_paths:
+            gcc_cmd.extend(['-I', path])
+        gcc_cmd.append(tmp_path)
+
+        # Try to compile to get better error messages
+        result = subprocess.run(
+            gcc_cmd,
+            capture_output=True,
+            text=True
+        )
+
+        if result.returncode != 0:
+            # If compilation failed, try preprocessing only
+            gcc_cmd = ['gcc', '-E']
+            for path in all_include_paths:
+                gcc_cmd.extend(['-I', path])
+            gcc_cmd.append(tmp_path)
+
+            result = subprocess.run(
+                gcc_cmd,
+                capture_output=True,
+                text=True
+            )
+
+            if result.returncode != 0:
+                return None, result.stderr
+
+        # Expand the full typedef chain
+        chain_accumulator = []
+        chain, error = expand_typedef_chain(type_name, all_include_paths, visited=None, chain_accumulator=chain_accumulator)
+        if chain:
+            # Add summary comment at the top showing the full chain
+            result = []
+            if len(chain_accumulator) > 1:
+                # Extract the final type from the last line in the chain
+                last_line = chain[-1]
+                # Try to extract the final resolved type
+                final_type = None
+
+                # For #define, the final value is after the macro name
+                if last_line.startswith('#define'):
+                    parts = last_line.split(None, 2)
+                    if len(parts) >= 3:
+                        final_type = parts[2]
+                # For typedef, extract the base type
+                elif last_line.startswith('typedef'):
+                    # Handle different typedef patterns
+                    if '(*' in last_line:
+                        # Function pointer: extract return type
+                        match = re.search(r'typedef\s+(\S+)', last_line)
+                        if match:
+                            final_type = match.group(1)
+                    else:
+                        # Simple typedef: extract base type
+                        match = re.search(r'typedef\s+(.+?)\s+\*?\s*\w+\s*;', last_line)
+                        if match:
+                            final_type = match.group(1).strip()
+
+                if final_type:
+                    summary = f"/* {chain_accumulator[0]} -> {final_type} */"
+                    result.append(summary)
+
+            result.extend(chain)
+            return '\n'.join(result), None
+
+        return None, "Typedef definition not found"
+
+    finally:
+        os.unlink(tmp_path)
+
+
+def print_help(prog_name):
+    """Print help message."""
+    help_text = f"""Usage: {prog_name} [OPTIONS] <type_name> [search_paths...]
+
+Find and display the expanded layout of a C struct or typedef using the preprocessor.
+
+Arguments:
+  <type_name>       Name of the struct or typedef to find (e.g., stat, flock, __kernel_off_t)
+  [search_paths...] Optional directories to search for headers
+                    (defaults to system include paths)
+
+Options:
+  --help            Show this help message and exit
+  --allow-musl      Include musl libc headers in the search
+                    (by default, musl headers are excluded)
+  --show-warnings   Display all warnings instead of just the count
+
+Examples:
+  {prog_name} stat
+  {prog_name} __kernel_off_t
+  {prog_name} --allow-musl flock
+  {prog_name} my_struct /path/to/headers
+  {prog_name} some_struct .
+
+The script will:
+  1. Search for the struct/typedef definition in .h header files
+  2. Expand each variant using the C preprocessor (gcc -E)
+  3. Show all unique layouts with their source files
+  4. Display the exact expanded types including platform-specific definitions
+"""
+    print(help_text)
+
+
+def main():
+    # Parse arguments
+    args = sys.argv[1:]
+    allow_musl = False
+    show_warnings = False
+    struct_name = None
+    search_paths = []
+
+    # Handle --help
+    if '--help' in args or '-h' in args:
+        print_help(sys.argv[0])
+        sys.exit(0)
+
+    # Handle --allow-musl
+    if '--allow-musl' in args:
+        allow_musl = True
+        args.remove('--allow-musl')
+
+    # Handle --show-warnings
+    if '--show-warnings' in args:
+        show_warnings = True
+        args.remove('--show-warnings')
+
+    # Get struct name and search paths
+    if len(args) < 1:
+        print(f"Error: struct_name is required", file=sys.stderr)
+        print(f"Usage: {sys.argv[0]} [OPTIONS] <struct_name> [search_paths...]", file=sys.stderr)
+        print(f"Try '{sys.argv[0]} --help' for more information.", file=sys.stderr)
+        sys.exit(1)
+
+    struct_name = args[0]
+    search_paths = args[1:] if len(args) > 1 else []
+
+    # Add system include paths if no paths provided
+    if not search_paths:
+        search_paths = get_system_include_paths()
+        print(f"Searching system include paths: {', '.join(search_paths[:3])}...", file=sys.stderr)
+
+    # Find header files
+    print(f"Searching for struct/typedef '{struct_name}'...", file=sys.stderr)
+
+    # Try using ripgrep first for much faster searching
+    found_in_structs_rg = find_struct_files_with_rg(struct_name, search_paths)
+    found_in_typedefs_rg = find_typedef_files_with_rg(struct_name, search_paths)
+
+    # Fallback to manual search if ripgrep not available
+    if found_in_structs_rg is None or found_in_typedefs_rg is None:
+        header_files = find_header_files(search_paths)
+        found_in_structs = []
+        found_in_typedefs = []
+        for header in header_files:
+            # Skip musl headers unless --allow-musl is passed
+            if not allow_musl and 'musl' in str(header):
+                continue
+            if find_struct_in_file(header, struct_name):
+                found_in_structs.append(header)
+            if find_typedef_in_file(header, struct_name):
+                found_in_typedefs.append(header)
+    else:
+        # Filter out musl if not allowed
+        found_in_structs = found_in_structs_rg if allow_musl else [h for h in found_in_structs_rg if 'musl' not in str(h)]
+        found_in_typedefs = found_in_typedefs_rg if allow_musl else [h for h in found_in_typedefs_rg if 'musl' not in str(h)]
+
+    # Determine what we found
+    is_struct = len(found_in_structs) > 0
+    is_typedef = len(found_in_typedefs) > 0
+
+    if not is_struct and not is_typedef:
+        print(f"Error: struct/typedef '{struct_name}' not found in any header files", file=sys.stderr)
+        sys.exit(1)
+
+    # Handle structs
+    if is_struct:
+        print(f"Found struct in {len(found_in_structs)} file(s)", file=sys.stderr)
+
+        # Expand the struct from all found headers and collect unique variants
+        variants = {}  # Maps normalized struct text to (formatted text, list of files)
+        warnings = []  # Collect warnings
+
+        for header in found_in_structs:
+            expanded, error = expand_struct(struct_name, header, search_paths)
+
+            if expanded:
+                normalized = normalize_struct(expanded)
+                if normalized not in variants:
+                    variants[normalized] = (expanded, [])
+                variants[normalized][1].append(str(header))
+            else:
+                warnings.append(f"Warning: Could not expand from {header}: {error}")
+
+        if not variants:
+            print(f"Error: Could not expand struct from any header file", file=sys.stderr)
+            sys.exit(1)
+
+        # Print warnings
+        if show_warnings:
+            for warning in warnings:
+                print(warning, file=sys.stderr)
+        elif warnings:
+            print(f"({len(warnings)} warnings - use --show-warnings to see details)", file=sys.stderr)
+
+        # Print all unique variants
+        print(f"\nFound {len(variants)} unique variant(s) of struct {struct_name}:", file=sys.stderr)
+        print("=" * 60, file=sys.stderr)
+
+        for idx, (normalized, (formatted, files)) in enumerate(variants.items(), 1):
+            if len(variants) > 1:
+                print(f"\n--- Variant {idx} ---", file=sys.stderr)
+
+            print(formatted, flush=True)
+
+            print(f"\nFound in:", file=sys.stderr)
+            for f in files:
+                print(f"  - {f}", file=sys.stderr)
+
+            if idx < len(variants):
+                print("\n" + "=" * 60, file=sys.stderr)
+
+    # Handle typedefs
+    if is_typedef:
+        print(f"Found typedef in {len(found_in_typedefs)} file(s)", file=sys.stderr)
+
+        # Expand the typedef from all found headers and collect unique variants
+        variants = {}  # Maps normalized typedef text to (formatted text, list of files)
+        typedef_warnings = []  # Collect warnings
+
+        for header in found_in_typedefs:
+            expanded, error = expand_typedef(struct_name, header, search_paths)
+
+            if expanded:
+                normalized = normalize_struct(expanded)
+                if normalized not in variants:
+                    variants[normalized] = (expanded, [])
+                variants[normalized][1].append(str(header))
+            else:
+                typedef_warnings.append(f"Warning: Could not expand from {header}: {error}")
+
+        if not variants:
+            print(f"Error: Could not expand typedef from any header file", file=sys.stderr)
+            if not is_struct:
+                sys.exit(1)
+        else:
+            # Print warnings
+            if show_warnings:
+                for warning in typedef_warnings:
+                    print(warning, file=sys.stderr)
+            elif typedef_warnings:
+                print(f"({len(typedef_warnings)} warnings - use --show-warnings to see details)", file=sys.stderr)
+
+            # Print all unique variants
+            if is_struct:
+                print(f"\n{'=' * 60}", file=sys.stderr)
+            print(f"\nFound {len(variants)} unique variant(s) of typedef {struct_name}:", file=sys.stderr)
+            print("=" * 60, file=sys.stderr)
+
+            for idx, (normalized, (formatted, files)) in enumerate(variants.items(), 1):
+                if len(variants) > 1:
+                    print(f"\n--- Variant {idx} ---", file=sys.stderr)
+
+                print(formatted, flush=True)
+
+                print(f"\nFound in:", file=sys.stderr)
+                for f in files:
+                    print(f"  - {f}", file=sys.stderr)
+
+                if idx < len(variants):
+                    print("\n" + "=" * 60, file=sys.stderr)
+
+
+if __name__ == '__main__':
+    main()
