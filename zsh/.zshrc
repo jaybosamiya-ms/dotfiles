@@ -49,7 +49,7 @@ if command -v nix-index >/dev/null; then source ~/.nix-command-not-found.sh || e
 bindkey '^H' __helper_function_for_ctrl_h
 __helper_function_for_ctrl_h() {
   local initial_spaces="${BUFFER%%[^ ]*}"
-  BUFFER="${initial_spaces}unbuffer ${BUFFER##$initial_spaces} --help | less -RF"
+  BUFFER="${initial_spaces}unbuffer ${BUFFER##$initial_spaces} --help | less -R"
   CURSOR=${#BUFFER}
   zle redisplay
 }
