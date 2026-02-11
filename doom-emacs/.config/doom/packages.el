@@ -113,7 +113,7 @@
 
 ;; An LLM prompting assistant
 (package! yap
-  :recipe (:host github :repo "meain/yap" :files ("*.el")))
+  :recipe (:host github :repo "meain/yap" :files ("*.el" "prompts" "prompts/*.md")))
 
 ;; Syntax highlighting for HotCRP reviews
 (package! hotcrp-review-mode
