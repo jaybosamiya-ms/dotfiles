@@ -503,6 +503,18 @@ function tempdir() {
         tempdirnew
     fi
 }
+# Create and cd into a petname-generated sub-folder inside /tmp/tempdir
+function tempdirp() {
+    if ! command -v petname >/dev/null; then
+        echo "petname not found" >&2
+        return 1
+    fi
+    tempdir
+    local name
+    name=$(petname)
+    mkdir -p "/tmp/tempdir/$name"
+    cd "/tmp/tempdir/$name"
+}
 
 if command -v wdiff >/dev/null; then
     # Colorized wdiff
