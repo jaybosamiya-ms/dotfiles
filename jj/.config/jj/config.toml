@@ -92,7 +92,7 @@ wl = ["util", "exec", "--", "watch", "-n", "0.1", "jj", "l", "--color=always", "
 # (or merge) commit.
 ff = [
   "bookmark", "move",
-  "--from", "latest(bookmarks(jayb) & ancestors(@))",
+  "--from", "latest(bookmarks(jayb*) & ancestors(@))",
   "--to", "latest(ancestors(@) & (merges() | ~empty()))"
 ]
 
