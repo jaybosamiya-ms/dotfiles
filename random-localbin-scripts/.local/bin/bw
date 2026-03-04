@@ -77,6 +77,8 @@ BWRAP_ARGS=(
     --ro-bind /lib64                    /lib64
     --ro-bind /usr/bin                  /usr/bin
     --ro-bind /usr/lib                  /usr/lib
+    --ro-bind-try /usr/sbin             /usr/sbin
+    --ro-bind-try /sbin                 /sbin
     --ro-bind /usr/local/bin            /usr/local/bin
     --ro-bind /usr/local/lib            /usr/local/lib
     --ro-bind /usr/libexec              /usr/libexec
@@ -192,12 +194,15 @@ BWRAP_ARGS=(
     # --- environment ---
     --clearenv
     --setenv HOME  /home/sandbox
-    --setenv PATH  "/home/sandbox/.local/share/mise/installs/node/${NODE_VERSION}/bin:/usr/local/bin:/usr/bin:/bin"
+    --setenv PATH  "/home/sandbox/.local/bin:/home/sandbox/.cargo/bin:/home/sandbox/.local/share/mise/installs/node/${NODE_VERSION}/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
     --setenv TERM  "${TERM:-xterm-256color}"
     --setenv LANG  "${LANG:-en_US.UTF-8}"
     --setenv USER  "sandbox"
     # Trigger powerlevel10k prompt change
     --setenv SSH_CONNECTION "127.0.0.1 0 127.0.0.1 0"
+    # Redirect cargo build artifacts into the tmpfs so they don't escape the sandbox
+    --setenv CARGO_TARGET_DIR      /tmp/cargo-target
+    --setenv CARGO_BUILD_BUILD_DIR /tmp/cargo-build
 )
 
 if [[ "${1:-}" == -h || "${1:-}" == --help ]]; then
