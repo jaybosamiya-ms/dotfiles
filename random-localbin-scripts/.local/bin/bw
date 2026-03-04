@@ -48,6 +48,8 @@ exec 5< <(printf 'sandbox:x:%s:\n' "$REAL_GID")
 # ---------------------------------------------------------------------------
 HOST_USER="${USER:-$(id -un)}"
 
+NODE_VERSION="22.11.0"
+
 # ---------------------------------------------------------------------------
 # Build bwrap argument array
 # ---------------------------------------------------------------------------
@@ -177,6 +179,12 @@ BWRAP_ARGS=(
     --ro-bind-try "$REAL_HOME/.cache/p10k-${HOST_USER}"                        /home/sandbox/.cache/p10k-${HOST_USER}
     --ro-bind-try "$REAL_HOME/.cache/gitstatus"                        /home/sandbox/.cache/gitstatus
 
+    # --- opencode state (rw) ---
+    --bind "$REAL_HOME/.local/share/opencode"   /home/sandbox/.local/share/opencode
+    --bind "$REAL_HOME/.local/state/opencode"   /home/sandbox/.local/state/opencode
+    --bind "$REAL_HOME/.cache/opencode"         /home/sandbox/.cache/opencode
+    --bind "$REAL_HOME/.config/opencode"        /home/sandbox/.config/opencode
+
     # --- project directory (rw, kept at real path) ---
     --bind "$REAL_PWD" "$REAL_PWD"
     --chdir "$REAL_PWD"
@@ -184,7 +192,7 @@ BWRAP_ARGS=(
     # --- environment ---
     --clearenv
     --setenv HOME  /home/sandbox
-    --setenv PATH  /usr/local/bin:/usr/bin:/bin
+    --setenv PATH  "/home/sandbox/.local/share/mise/installs/node/${NODE_VERSION}/bin:/usr/local/bin:/usr/bin:/bin"
     --setenv TERM  "${TERM:-xterm-256color}"
     --setenv LANG  "${LANG:-en_US.UTF-8}"
     --setenv USER  "sandbox"
@@ -208,9 +216,10 @@ if [[ "${1:-}" == --run ]]; then
     exec /usr/bin/bwrap "${BWRAP_ARGS[@]}" /usr/bin/zsh -l -c "$*"
 fi
 
-CHOICE=$(printf 'shell\nclaude\n' | fzf --prompt="$PROG> " --no-sort --reverse --height=8 --border) || exit 1
+CHOICE=$(printf 'shell\nclaude\nopencode\n' | fzf --prompt="$PROG> " --no-sort --reverse --height=8 --border) || exit 1
 
 case "$CHOICE" in
-    shell)  exec /usr/bin/bwrap "${BWRAP_ARGS[@]}" /usr/bin/zsh -l ;;
-    claude) exec /usr/bin/bwrap "${BWRAP_ARGS[@]}" /usr/bin/zsh -l -c "/home/sandbox/.local/bin/claude --dangerously-skip-permissions" ;;
+    shell)    exec /usr/bin/bwrap "${BWRAP_ARGS[@]}" /usr/bin/zsh -l ;;
+    claude)   exec /usr/bin/bwrap "${BWRAP_ARGS[@]}" /usr/bin/zsh -l -c "/home/sandbox/.local/bin/claude --dangerously-skip-permissions" ;;
+    opencode) exec /usr/bin/bwrap "${BWRAP_ARGS[@]}" /usr/bin/zsh -l -c "/home/sandbox/.local/share/mise/installs/node/${NODE_VERSION}/bin/opencode" ;;
 esac
