@@ -177,7 +177,15 @@ def find_struct_files_with_rg(struct_name, search_paths):
             # Filter to only files that actually have the struct definition (not just usage)
             # by verifying the file contains the pattern with find_struct_in_file
             verified_files = [f for f in files if find_struct_in_file(f, struct_name)]
-            return verified_files
+            # Deduplicate by canonical path (overlapping search paths can find the same file twice)
+            seen = set()
+            deduped = []
+            for f in verified_files:
+                canonical = f.resolve()
+                if canonical not in seen:
+                    seen.add(canonical)
+                    deduped.append(f)
+            return deduped
         return []
     except (subprocess.TimeoutExpired, FileNotFoundError):
         # Fallback to manual search if rg not available or times out
@@ -220,7 +228,7 @@ def find_typedef_files_with_rg(type_name, search_paths):
             rf'#\s*define\s+{re.escape(type_name)}\b',
         ]
 
-        all_files = set()
+        all_files = {}  # canonical path -> original Path, for dedup
         for pattern in patterns:
             # Run ripgrep
             cmd = ['rg', '-l', '--type=c', pattern] + search_paths
@@ -228,9 +236,12 @@ def find_typedef_files_with_rg(type_name, search_paths):
 
             if result.returncode == 0:
                 files = [Path(line.strip()) for line in result.stdout.strip().split('\n') if line.strip()]
-                all_files.update(files)
+                for f in files:
+                    canonical = f.resolve()
+                    if canonical not in all_files:
+                        all_files[canonical] = f
 
-        return list(all_files) if all_files else []
+        return list(all_files.values()) if all_files else []
     except (subprocess.TimeoutExpired, FileNotFoundError):
         # Fallback to manual search if rg not available or times out
         return None
@@ -695,6 +706,214 @@ def expand_typedef(type_name, header_file, search_paths):
     return '\n'.join(lines), None
 
 
+import difflib
+
+
+# ANSI color codes
+ANSI_RED = '\033[31m'
+ANSI_GREEN = '\033[32m'
+ANSI_YELLOW = '\033[33m'
+ANSI_BLUE = '\033[34m'
+ANSI_BG_CYAN = '\033[46m'
+ANSI_RESET = '\033[0m'
+ANSI_BOLD = '\033[1m'
+
+
+def use_color():
+    """Check if stdout supports ANSI colors."""
+    return hasattr(sys.stdout, 'isatty') and sys.stdout.isatty()
+
+
+def _find_context_header(lines, line_idx):
+    """Look backwards from line_idx to find the nearest struct/section header."""
+    for i in range(line_idx - 1, -1, -1):
+        stripped = lines[i].strip()
+        # Match struct headers like "struct foo {"
+        if re.match(r'struct\s+\w+\s*\{', stripped):
+            return stripped.rstrip('{').strip()
+        # Match typedef lines
+        if stripped.startswith('typedef '):
+            return None  # typedefs are self-describing
+        # Match comment section headers like "/* 64-bit: */"
+        if stripped.startswith('/*') and stripped.endswith('*/'):
+            return stripped
+    return None
+
+
+def format_variant_diff(base_text, other_text, variant_idx):
+    """Produce a simplified diff of other_text against base_text.
+
+    Returns a string showing only the changed lines with -/+ prefixes,
+    with context headers showing which struct/section each change belongs to.
+    """
+    color = use_color()
+    base_lines = base_text.splitlines()
+    other_lines = other_text.splitlines()
+
+    sm = difflib.SequenceMatcher(None, base_lines, other_lines)
+    diff_chunks = []
+    last_context = None
+
+    for tag, i1, i2, j1, j2 in sm.get_opcodes():
+        if tag == 'equal':
+            continue
+
+        # Find context header from the base side (or other side for inserts)
+        if tag in ('replace', 'delete'):
+            context = _find_context_header(base_lines, i1)
+        else:
+            context = _find_context_header(other_lines, j1)
+
+        chunk_lines = []
+
+        # Add context header if it changed from the last chunk
+        if context and context != last_context:
+            if color:
+                chunk_lines.append(f'{ANSI_BOLD}  {context}:{ANSI_RESET}')
+            else:
+                chunk_lines.append(f'  {context}:')
+            last_context = context
+
+        if tag == 'replace':
+            for line in base_lines[i1:i2]:
+                if color:
+                    chunk_lines.append(f'{ANSI_RED}  - {line}{ANSI_RESET}')
+                else:
+                    chunk_lines.append(f'  - {line}')
+            for line in other_lines[j1:j2]:
+                if color:
+                    chunk_lines.append(f'{ANSI_GREEN}  + {line}{ANSI_RESET}')
+                else:
+                    chunk_lines.append(f'  + {line}')
+        elif tag == 'delete':
+            for line in base_lines[i1:i2]:
+                if color:
+                    chunk_lines.append(f'{ANSI_RED}  - {line}{ANSI_RESET}')
+                else:
+                    chunk_lines.append(f'  - {line}')
+        elif tag == 'insert':
+            for line in other_lines[j1:j2]:
+                if color:
+                    chunk_lines.append(f'{ANSI_GREEN}  + {line}{ANSI_RESET}')
+                else:
+                    chunk_lines.append(f'  + {line}')
+
+        if chunk_lines:
+            diff_chunks.append('\n'.join(chunk_lines))
+
+    if not diff_chunks:
+        return None  # identical
+
+    header = f'--- Variant {variant_idx} (diff from Variant 1) ---'
+    return header + '\n' + '\n'.join(diff_chunks)
+
+
+def format_variant_highlighted(text, differing_lines):
+    """Print a full variant with a gutter marker on lines that differ.
+
+    differing_lines is a set of line indices (0-based) that differ from the other variant.
+    Uses a cyan-background space in the left margin for changed lines.
+    """
+    color = use_color()
+    lines = text.splitlines()
+    result = []
+    for i, line in enumerate(lines):
+        if i in differing_lines:
+            if color:
+                result.append(f'{ANSI_BG_CYAN} {ANSI_RESET} {line}')
+            else:
+                result.append(f'| {line}')
+        else:
+            result.append(f'  {line}')
+    return '\n'.join(result)
+
+
+def find_differing_lines(base_text, other_text):
+    """Find which line indices differ between base_text and other_text.
+
+    Returns (base_differing, other_differing) — sets of 0-based line indices.
+    Skips empty/whitespace-only lines.
+    """
+    base_lines = base_text.splitlines()
+    other_lines = other_text.splitlines()
+    sm = difflib.SequenceMatcher(None, base_lines, other_lines)
+    base_differing = set()
+    other_differing = set()
+    for tag, i1, i2, j1, j2 in sm.get_opcodes():
+        if tag != 'equal':
+            for i in range(i1, i2):
+                if base_lines[i].strip():
+                    base_differing.add(i)
+            for j in range(j1, j2):
+                if other_lines[j].strip():
+                    other_differing.add(j)
+    return base_differing, other_differing
+
+
+def print_variants(variants, type_name, search_paths, is_struct, mode):
+    """Print variants according to the selected display mode.
+
+    mode is one of: 'diff' (default), 'highlight'.
+    """
+    variant_list = list(variants.values())  # [(formatted, files), ...]
+    num_variants = len(variant_list)
+
+    base_formatted = variant_list[0][0] if variant_list else None
+
+    # In highlight mode, pre-compute which lines in variant 1 differ from any other variant
+    base_differing_union = set()
+    if mode == 'highlight' and num_variants > 1:
+        for other_formatted, _ in variant_list[1:]:
+            base_diff, _ = find_differing_lines(base_formatted, other_formatted)
+            base_differing_union |= base_diff
+
+    for idx, (formatted, files) in enumerate(variant_list, 1):
+        sa_comment = format_size_align_comment(
+            type_name, Path(files[0]), search_paths, is_struct=is_struct
+        )
+
+        if idx == 1:
+            if num_variants > 1:
+                print(f"\n--- Variant {idx} ---", file=sys.stderr)
+            if mode == 'highlight' and num_variants > 1:
+                print(f'  {sa_comment}')
+                print(format_variant_highlighted(formatted, base_differing_union), flush=True)
+            else:
+                print(sa_comment)
+                print(formatted, flush=True)
+        else:
+            if mode == 'highlight':
+                print(f"\n--- Variant {idx} ---", file=sys.stderr)
+                print(f'  {sa_comment}')
+                _, other_differing = find_differing_lines(base_formatted, formatted)
+                print(format_variant_highlighted(formatted, other_differing), flush=True)
+            else:
+                # diff mode (default)
+                diff_output = format_variant_diff(base_formatted, formatted, idx)
+                if diff_output:
+                    print(diff_output, flush=True)
+                else:
+                    print(f"\n--- Variant {idx} (identical to Variant 1) ---", file=sys.stderr)
+
+        print(f"\nFound in:", file=sys.stderr)
+        for f in files:
+            print(f"  - {f}", file=sys.stderr)
+
+        if idx < num_variants:
+            print("\n" + "=" * 60, file=sys.stderr)
+
+    # Hint about alternative display mode (only when multiple variants exist)
+    if num_variants > 1:
+        if mode == 'highlight':
+            hint_flags = '--diff'
+        else:
+            hint_flags = 'no flag (highlight mode)'
+        print(
+            f"\n{ANSI_BLUE}NOTE{ANSI_RESET}: Use {hint_flags} for alternative view.",
+            file=sys.stderr,
+        )
+
+
 def print_help(prog_name):
     """Print help message."""
     help_text = f"""Usage: {prog_name} [OPTIONS] <type_name> [search_paths...]
@@ -711,6 +930,7 @@ Options:
   --allow-musl      Include musl libc headers in the search
                     (by default, musl headers are excluded)
   --show-warnings   Display all warnings instead of just the count
+  --diff            Show variants as simplified diffs (instead of default highlighted view)
 
 Examples:
   {prog_name} stat
@@ -733,6 +953,7 @@ def main():
     args = sys.argv[1:]
     allow_musl = False
     show_warnings = False
+    variant_mode = 'highlight'  # default: show all variants in full with gutter markers
     struct_name = None
     search_paths = []
 
@@ -750,6 +971,11 @@ def main():
     if '--show-warnings' in args:
         show_warnings = True
         args.remove('--show-warnings')
+
+    # Handle --diff
+    if '--diff' in args:
+        variant_mode = 'diff'
+        args.remove('--diff')
 
     # Get struct name and search paths
     if len(args) < 1:
@@ -833,21 +1059,7 @@ def main():
         print(f"\nFound {len(variants)} unique variant(s) of struct {struct_name}:", file=sys.stderr)
         print("=" * 60, file=sys.stderr)
 
-        for idx, (normalized, (formatted, files)) in enumerate(variants.items(), 1):
-            if len(variants) > 1:
-                print(f"\n--- Variant {idx} ---", file=sys.stderr)
-
-            # Query size and alignment for 64-bit and 32-bit
-            sa_comment = format_size_align_comment(struct_name, Path(files[0]), search_paths, is_struct=True)
-            print(sa_comment)
-            print(formatted, flush=True)
-
-            print(f"\nFound in:", file=sys.stderr)
-            for f in files:
-                print(f"  - {f}", file=sys.stderr)
-
-            if idx < len(variants):
-                print("\n" + "=" * 60, file=sys.stderr)
+        print_variants(variants, struct_name, search_paths, is_struct=True, mode=variant_mode)
 
     # Handle typedefs
     if is_typedef:
@@ -886,21 +1098,7 @@ def main():
             print(f"\nFound {len(variants)} unique variant(s) of typedef {struct_name}:", file=sys.stderr)
             print("=" * 60, file=sys.stderr)
 
-            for idx, (normalized, (formatted, files)) in enumerate(variants.items(), 1):
-                if len(variants) > 1:
-                    print(f"\n--- Variant {idx} ---", file=sys.stderr)
-
-                # Query size and alignment for 64-bit and 32-bit
-                sa_comment = format_size_align_comment(struct_name, Path(files[0]), search_paths, is_struct=False)
-                print(sa_comment)
-                print(formatted, flush=True)
-
-                print(f"\nFound in:", file=sys.stderr)
-                for f in files:
-                    print(f"  - {f}", file=sys.stderr)
-
-                if idx < len(variants):
-                    print("\n" + "=" * 60, file=sys.stderr)
+            print_variants(variants, struct_name, search_paths, is_struct=False, mode=variant_mode)
 
 
 if __name__ == '__main__':
