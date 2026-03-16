@@ -126,9 +126,9 @@ def get_system_include_paths():
     try:
         result = subprocess.run(
             ['gcc', '-E', '-Wp,-v', '-xc', '/dev/null'],
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            stderr=subprocess.PIPE
         )
         # GCC outputs this to stderr
         output = result.stderr
@@ -166,7 +166,7 @@ def get_header_name(header_file, search_paths):
                     if not line:
                         break
                     # Look for: # error "Never include <bits/foo.h> directly; use <bar.h> instead."
-                    match = re.search(r'error.*use\s+<([^>]+)>\s+instead', line)
+                    match = re.search(r'error.*(?:use|include)\s+<([^>]+)>\s+instead', line)
                     if match:
                         return match.group(1)
         except Exception:
@@ -202,6 +202,75 @@ def get_header_name(header_file, search_paths):
 
     # Fallback to basename if not in search paths
     return header_path.name
+
+
+def get_type_size_and_align(type_expr, header_file, search_paths, is_struct=False, extra_cflags=None):
+    """Compile a small C program to get sizeof and _Alignof for a type.
+
+    Returns (size, alignment) as integers, or (None, None) on failure.
+    """
+    header_name = get_header_name(header_file, search_paths)
+    if is_struct:
+        c_type = f'struct {type_expr}'
+    else:
+        c_type = type_expr
+
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.c', delete=False) as src:
+        src_path = src.name
+        src.write(f'#include <stdio.h>\n')
+        src.write(f'#include <{header_name}>\n')
+        src.write(f'int main(void) {{\n')
+        src.write(f'  printf("%zu %zu\\n", sizeof({c_type}), _Alignof({c_type}));\n')
+        src.write(f'  return 0;\n')
+        src.write(f'}}\n')
+
+    bin_path = src_path + '.bin'
+    try:
+        all_include_paths = get_system_include_paths()
+
+        gcc_cmd = ['gcc']
+        if extra_cflags:
+            gcc_cmd.extend(extra_cflags)
+        gcc_cmd.extend(['-o', bin_path])
+        for path in all_include_paths:
+            gcc_cmd.extend(['-I', path])
+        gcc_cmd.append(src_path)
+
+        result = subprocess.run(gcc_cmd, capture_output=True, text=True, timeout=10)
+        if result.returncode != 0:
+            return None, None
+
+        result = subprocess.run([bin_path], capture_output=True, text=True, timeout=5)
+        if result.returncode != 0:
+            return None, None
+
+        parts = result.stdout.strip().split()
+        if len(parts) == 2:
+            return int(parts[0]), int(parts[1])
+        return None, None
+    except Exception:
+        return None, None
+    finally:
+        try:
+            os.unlink(src_path)
+        except OSError:
+            pass
+        try:
+            os.unlink(bin_path)
+        except OSError:
+            pass
+
+
+def format_size_align_comment(type_label, header_file, search_paths, is_struct=False):
+    """Query size/alignment for both 64-bit and 32-bit and return a comment string."""
+    s64, a64 = get_type_size_and_align(type_label, header_file, search_paths, is_struct=is_struct, extra_cflags=['-m64'])
+    s32, a32 = get_type_size_and_align(type_label, header_file, search_paths, is_struct=is_struct, extra_cflags=['-m32'])
+
+    c_type = f'struct {type_label}' if is_struct else type_label
+    v64 = f'{s64}/{a64}' if s64 is not None else 'unknown'
+    v32 = f'{s32}/{a32}' if s32 is not None else 'unknown'
+
+    return f'/* {c_type}: size/align = {v64} (64-bit), {v32} (32-bit) */'
 
 
 def normalize_struct(struct_text):
@@ -862,6 +931,9 @@ def main():
             if len(variants) > 1:
                 print(f"\n--- Variant {idx} ---", file=sys.stderr)
 
+            # Query size and alignment for 64-bit and 32-bit
+            sa_comment = format_size_align_comment(struct_name, Path(files[0]), search_paths, is_struct=True)
+            print(sa_comment)
             print(formatted, flush=True)
 
             print(f"\nFound in:", file=sys.stderr)
@@ -912,6 +984,9 @@ def main():
                 if len(variants) > 1:
                     print(f"\n--- Variant {idx} ---", file=sys.stderr)
 
+                # Query size and alignment for 64-bit and 32-bit
+                sa_comment = format_size_align_comment(struct_name, Path(files[0]), search_paths, is_struct=False)
+                print(sa_comment)
                 print(formatted, flush=True)
 
                 print(f"\nFound in:", file=sys.stderr)
