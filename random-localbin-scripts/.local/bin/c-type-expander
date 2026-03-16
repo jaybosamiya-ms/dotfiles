@@ -14,6 +14,133 @@ import shlex
 from pathlib import Path
 
 
+def preprocess_header(header_name, search_paths, extra_cflags=None):
+    """Preprocess a header with gcc -E and return the full output."""
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.c', delete=False) as tmp:
+        tmp_path = tmp.name
+        tmp.write(f'#include <{header_name}>\n')
+    try:
+        gcc_cmd = ['gcc', '-E']
+        if extra_cflags:
+            gcc_cmd.extend(extra_cflags)
+        for p in search_paths:
+            gcc_cmd.extend(['-I', p])
+        gcc_cmd.append(tmp_path)
+        result = subprocess.run(gcc_cmd, capture_output=True, text=True, timeout=10)
+        if result.returncode != 0:
+            return None
+        return result.stdout
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return None
+    finally:
+        os.unlink(tmp_path)
+
+
+def resolve_typedef_chain_from_preprocessed(type_name, preprocessed_text, max_depth=20):
+    """Follow a typedef chain in preprocessed output.
+
+    Returns list of (base_type, alias) tuples representing the chain,
+    e.g. [('__kernel_ulong_t', '__kernel_size_t'), ('unsigned long', '__kernel_ulong_t')]
+    """
+    chain = []
+    current = type_name
+    visited = set()
+
+    for _ in range(max_depth):
+        if current in visited:
+            break
+        visited.add(current)
+
+        # Find: typedef <base_type> [*]<current>;
+        pattern = rf'typedef\s+(.+?)\s+(\*?)\s*\b{re.escape(current)}\b\s*;'
+        matches = re.findall(pattern, preprocessed_text)
+        if not matches:
+            break
+
+        base_type, pointer = matches[-1]
+        base_type = base_type.strip()
+        if pointer:
+            chain.append((f'{base_type} *', current))
+        else:
+            chain.append((base_type, current))
+
+        current = base_type
+
+    return chain
+
+
+def resolve_typedef_dual_arch(type_name, header_name, search_paths):
+    """Resolve a typedef chain for both 64-bit and 32-bit.
+
+    Returns (chain_64, chain_32, final_64, final_32) where each chain is
+    a list of (base_type, alias) tuples, and final_* is the leaf primitive type.
+    """
+    pp64 = preprocess_header(header_name, search_paths, ['-m64'])
+    pp32 = preprocess_header(header_name, search_paths, ['-m32'])
+
+    chain_64 = resolve_typedef_chain_from_preprocessed(type_name, pp64) if pp64 else []
+    chain_32 = resolve_typedef_chain_from_preprocessed(type_name, pp32) if pp32 else []
+
+    final_64 = chain_64[-1][0] if chain_64 else None
+    final_32 = chain_32[-1][0] if chain_32 else None
+
+    return chain_64, chain_32, final_64, final_32
+
+
+def format_typedef_chain_dual(type_name, chain_64, chain_32, final_64, final_32):
+    """Format a typedef chain showing both archs when they differ.
+
+    Returns a list of output lines.
+    """
+    lines = []
+
+    if not chain_64 and not chain_32:
+        return lines
+
+    # Check if both archs produce the same chain
+    same_chain = (chain_64 == chain_32)
+
+    if same_chain:
+        # Single chain output
+        if final_64 and len(chain_64) > 1:
+            lines.append(f'/* {type_name} -> {final_64} */')
+        for base, alias in chain_64:
+            lines.append(f'typedef {base} {alias};')
+    else:
+        # Dual output — show both
+        if final_64 and final_32:
+            lines.append(f'/* {type_name} -> {final_64} (64-bit) | {final_32} (32-bit) */')
+        elif final_64:
+            lines.append(f'/* {type_name} -> {final_64} (64-bit) | unknown (32-bit) */')
+        elif final_32:
+            lines.append(f'/* {type_name} -> unknown (64-bit) | {final_32} (32-bit) */')
+
+        if chain_64:
+            lines.append(f'/* 64-bit: */')
+            for base, alias in chain_64:
+                lines.append(f'typedef {base} {alias};')
+
+        if chain_32 and chain_32 != chain_64:
+            lines.append(f'/* 32-bit: */')
+            for base, alias in chain_32:
+                lines.append(f'typedef {base} {alias};')
+
+    return lines
+
+
+def format_field_annotation(type_name, final_64, final_32):
+    """Format an inline annotation for a struct field.
+
+    Returns a string like 'unsigned long' or 'unsigned long (64) | unsigned int (32)'.
+    """
+    if final_64 == final_32 or (final_64 and not final_32):
+        return final_64
+    elif final_32 and not final_64:
+        return final_32
+    else:
+        return f'{final_64} (64) | {final_32} (32)'
+
+
 def find_struct_in_file(file_path, struct_name):
     """Check if a struct definition exists in the given file."""
     try:
@@ -448,7 +575,7 @@ def expand_struct_recursive(struct_name, search_paths, visited_structs=None, vis
     if visited_typedefs is None:
         visited_typedefs = set()
     if typedef_final_types is None:
-        typedef_final_types = {}  # Maps typedef name -> final type
+        typedef_final_types = {}  # Maps typedef name -> annotation string
 
     # Prevent infinite recursion
     if struct_name in visited_structs or depth >= max_depth:
@@ -482,50 +609,28 @@ def expand_struct_recursive(struct_name, search_paths, visited_structs=None, vis
         nested_structs = find_struct_types_in_fields(fields)
         nested_typedefs = find_typedefs_in_fields(fields)
 
-        # Recursively expand typedefs found in fields first to populate typedef_final_types
+        # Resolve typedefs via preprocessor for both architectures
+        header_name = get_header_name(header, search_paths)
         typedef_results = []
         for typedef_name in nested_typedefs:
             if typedef_name not in visited_typedefs:
                 visited_typedefs.add(typedef_name)
-                # expand_typedef_chain manages its own visited set, so pass a fresh one
-                chain_accumulator = []
-                typedef_chain, typedef_error = expand_typedef_chain(typedef_name, search_paths, set(), chain_accumulator)
-                if typedef_chain:
-                    # Extract the final type from the last line in the chain
-                    last_line = typedef_chain[-1]
-                    final_type = None
+                chain_64, chain_32, final_64, final_32 = resolve_typedef_dual_arch(
+                    typedef_name, header_name, search_paths
+                )
 
-                    # For #define, the final value is after the macro name
-                    if last_line.startswith('#define'):
-                        parts = last_line.split(None, 2)
-                        if len(parts) >= 3:
-                            final_type = parts[2]
-                    # For typedef, extract the base type
-                    elif last_line.startswith('typedef'):
-                        # Handle different typedef patterns
-                        if '(*' in last_line:
-                            # Function pointer: extract return type
-                            match = re.search(r'typedef\s+(\S+)', last_line)
-                            if match:
-                                final_type = match.group(1)
-                        else:
-                            # Simple typedef: extract base type
-                            match = re.search(r'typedef\s+(.+?)\s+\*?\s*\w+\s*;', last_line)
-                            if match:
-                                final_type = match.group(1).strip()
+                if chain_64 or chain_32:
+                    # Store annotation for inline struct field comments
+                    annotation = format_field_annotation(typedef_name, final_64, final_32)
+                    if annotation:
+                        typedef_final_types[typedef_name] = annotation
 
-                    # Store the final type for inline comments (do this for all chains)
-                    if final_type:
-                        typedef_final_types[typedef_name] = final_type
-
-                    # Add summary comment at the top showing the full chain (only if chain > 1)
-                    typedef_result = []
-                    if len(chain_accumulator) > 1 and final_type:
-                        summary = f"/* {chain_accumulator[0]} -> {final_type} */"
-                        typedef_result.append(summary)
-
-                    typedef_result.extend(typedef_chain)
-                    typedef_results.append('\n'.join(typedef_result))
+                    # Format the full chain for display below the struct
+                    chain_lines = format_typedef_chain_dual(
+                        typedef_name, chain_64, chain_32, final_64, final_32
+                    )
+                    if chain_lines:
+                        typedef_results.append('\n'.join(chain_lines))
 
         # Annotate the struct with inline comments for typedef final types
         annotated_struct = annotate_struct_with_typedef_comments(expanded, typedef_final_types)
@@ -568,225 +673,26 @@ def expand_struct(struct_name, header_file, search_paths):
     return None, error
 
 
-def expand_typedef_chain(type_name, search_paths, visited=None, chain_accumulator=None):
-    """Recursively expand a typedef chain to its base type."""
-    if visited is None:
-        visited = set()
-    if chain_accumulator is None:
-        chain_accumulator = []
-
-    # Prevent infinite recursion
-    if type_name in visited:
-        return [f"typedef (circular reference) {type_name};"], None
-    visited.add(type_name)
-    chain_accumulator.append(type_name)
-
-    # Try to use ripgrep first for faster searching
-    header_files = find_typedef_files_with_rg(type_name, search_paths)
-
-    # Fallback to manual search if ripgrep not available
-    if header_files is None:
-        header_files = find_header_files(search_paths)
-        # Filter to only files that contain the typedef
-        header_files = [h for h in header_files if find_typedef_in_file(h, type_name)]
-
-    for header in header_files:
-        if 'musl' in str(header):  # Skip musl by default
-            continue
-
-        # Read the typedef from the file
-        try:
-            with open(header, 'r', encoding='utf-8', errors='ignore') as f:
-                content = f.read()
-
-                # First, try to match glibc __STD_TYPE macro pattern: __STD_TYPE <type> name;
-                std_type_pattern = rf'__STD_TYPE\s+(.+?)\s+{re.escape(type_name)}\s*;'
-                match = re.search(std_type_pattern, content)
-                if match:
-                    base_type = match.group(1).strip()
-                    chain = [f"typedef {base_type} {type_name};"]
-
-                    # Recursively expand the base type
-                    if base_type.startswith('__') and not base_type.startswith('__typeof__'):
-                        sub_chain, error = expand_typedef_chain(base_type, search_paths, visited, chain_accumulator)
-                        if sub_chain:
-                            chain.extend(sub_chain)
-
-                    return chain, None
-
-                # Try #define macro pattern: #define __MACRO_NAME value
-                define_pattern = rf'#\s*define\s+{re.escape(type_name)}\s+(.+?)(?:\s*\/\*.*?\*\/\s*)?$'
-                match = re.search(define_pattern, content, re.MULTILINE)
-                if match:
-                    value = match.group(1).strip()
-                    # Remove trailing comments
-                    value = re.sub(r'/\*.*?\*/', '', value).strip()
-                    value = re.sub(r'//.*$', '', value).strip()
-
-                    chain = [f"#define {type_name} {value}"]
-
-                    # If the value is another type-like macro, recursively expand it
-                    # Common patterns: __U32_TYPE, __UQUAD_TYPE, __SYSCALL_ULONG_TYPE, etc.
-                    if value.startswith('__') and not value.startswith('__typeof__'):
-                        # Check if it looks like a type macro (all caps with _TYPE or ends with _t)
-                        if '_TYPE' in value or value.endswith('_t'):
-                            sub_chain, error = expand_typedef_chain(value, search_paths, visited, chain_accumulator)
-                            if sub_chain:
-                                chain.extend(sub_chain)
-
-                    return chain, None
-
-                # Look for the typedef definition
-                # Try function pointer pattern first: typedef <ret> (*name) (<params>);
-                func_ptr_pattern = rf'typedef\s+(.+?)\s*\(\s*\*\s*{re.escape(type_name)}\s*\)\s*\(([^)]*)\)\s*;'
-                match = re.search(func_ptr_pattern, content)
-                if match:
-                    ret_type = match.group(1).strip()
-                    params = match.group(2).strip()
-                    chain = [f"typedef {ret_type} (*{type_name}) ({params});"]
-
-                    # Check if return type is itself a typedef
-                    if ret_type.startswith('__') and not ret_type.startswith('__typeof__'):
-                        sub_chain, error = expand_typedef_chain(ret_type, search_paths, visited, chain_accumulator)
-                        if sub_chain:
-                            chain.extend(sub_chain)
-
-                    return chain, None
-
-                # Try function type pattern: typedef <ret> name(<params>);
-                func_type_pattern = rf'typedef\s+(\w+)\s+{re.escape(type_name)}\s*\(([^)]*)\)\s*;'
-                match = re.search(func_type_pattern, content)
-                if match:
-                    ret_type = match.group(1).strip()
-                    params = match.group(2).strip()
-                    chain = [f"typedef {ret_type} {type_name}({params});"]
-
-                    # Check if return type is itself a typedef
-                    if ret_type.startswith('__') and not ret_type.startswith('__typeof__'):
-                        sub_chain, error = expand_typedef_chain(ret_type, search_paths, visited, chain_accumulator)
-                        if sub_chain:
-                            chain.extend(sub_chain)
-
-                    return chain, None
-
-                # Try simple typedef pattern: typedef <type> *name; or typedef <type> name;
-                # Use word boundary to ensure we match the exact type name
-                simple_pattern = rf'typedef\s+(.+?)\s*(\*?)\s*\b{re.escape(type_name)}\b\s*;'
-                match = re.search(simple_pattern, content)
-                if match:
-                    base_type = match.group(1).strip()
-                    pointer = match.group(2).strip()
-
-                    if pointer:
-                        chain = [f"typedef {base_type} {pointer}{type_name};"]
-                    else:
-                        chain = [f"typedef {base_type} {type_name};"]
-
-                    # Check if base_type is itself a typedef
-                    if base_type.startswith('__') and not base_type.startswith('__typeof__'):
-                        sub_chain, error = expand_typedef_chain(base_type, search_paths, visited, chain_accumulator)
-                        if sub_chain:
-                            chain.extend(sub_chain)
-
-                    return chain, None
-        except Exception as e:
-            continue
-
-    return None, f"Typedef {type_name} not found"
 
 
 def expand_typedef(type_name, header_file, search_paths):
-    """Expand a typedef definition using the C preprocessor and compiler."""
+    """Expand a typedef definition using the C preprocessor for both architectures."""
     header_name = get_header_name(header_file, search_paths)
 
-    # Create a temporary C file that uses __typeof__ to get the underlying type
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.c', delete=False) as tmp:
-        tmp_path = tmp.name
-        tmp.write(f'#include <{header_name}>\n')
-        tmp.write(f'typedef __typeof__({type_name}) __expanded_type;\n')
-        tmp.write(f'__expanded_type __type_instance;\n')
+    all_include_paths = get_system_include_paths()
+    header_dir = str(Path(header_file).parent)
+    if header_dir not in all_include_paths:
+        all_include_paths.insert(0, header_dir)
 
-    try:
-        # Get all system include paths from gcc
-        all_include_paths = get_system_include_paths()
+    chain_64, chain_32, final_64, final_32 = resolve_typedef_dual_arch(
+        type_name, header_name, all_include_paths
+    )
 
-        # Add the directory containing the header file to include paths
-        header_dir = str(Path(header_file).parent)
-        if header_dir not in all_include_paths:
-            all_include_paths.insert(0, header_dir)
-
-        # Build gcc command with -I flags for all include paths
-        # Use -fdump-tree-original to get type information
-        gcc_cmd = ['gcc', '-S', '-o', '/dev/null']
-        for path in all_include_paths:
-            gcc_cmd.extend(['-I', path])
-        gcc_cmd.append(tmp_path)
-
-        # Try to compile to get better error messages
-        result = subprocess.run(
-            gcc_cmd,
-            capture_output=True,
-            text=True
-        )
-
-        if result.returncode != 0:
-            # If compilation failed, try preprocessing only
-            gcc_cmd = ['gcc', '-E']
-            for path in all_include_paths:
-                gcc_cmd.extend(['-I', path])
-            gcc_cmd.append(tmp_path)
-
-            result = subprocess.run(
-                gcc_cmd,
-                capture_output=True,
-                text=True
-            )
-
-            if result.returncode != 0:
-                return None, result.stderr
-
-        # Expand the full typedef chain
-        chain_accumulator = []
-        chain, error = expand_typedef_chain(type_name, all_include_paths, visited=None, chain_accumulator=chain_accumulator)
-        if chain:
-            # Add summary comment at the top showing the full chain
-            result = []
-            if len(chain_accumulator) > 1:
-                # Extract the final type from the last line in the chain
-                last_line = chain[-1]
-                # Try to extract the final resolved type
-                final_type = None
-
-                # For #define, the final value is after the macro name
-                if last_line.startswith('#define'):
-                    parts = last_line.split(None, 2)
-                    if len(parts) >= 3:
-                        final_type = parts[2]
-                # For typedef, extract the base type
-                elif last_line.startswith('typedef'):
-                    # Handle different typedef patterns
-                    if '(*' in last_line:
-                        # Function pointer: extract return type
-                        match = re.search(r'typedef\s+(\S+)', last_line)
-                        if match:
-                            final_type = match.group(1)
-                    else:
-                        # Simple typedef: extract base type
-                        match = re.search(r'typedef\s+(.+?)\s+\*?\s*\w+\s*;', last_line)
-                        if match:
-                            final_type = match.group(1).strip()
-
-                if final_type:
-                    summary = f"/* {chain_accumulator[0]} -> {final_type} */"
-                    result.append(summary)
-
-            result.extend(chain)
-            return '\n'.join(result), None
-
+    if not chain_64 and not chain_32:
         return None, "Typedef definition not found"
 
-    finally:
-        os.unlink(tmp_path)
+    lines = format_typedef_chain_dual(type_name, chain_64, chain_32, final_64, final_32)
+    return '\n'.join(lines), None
 
 
 def print_help(prog_name):
