@@ -83,6 +83,7 @@ BWRAP_ARGS=(
     --ro-bind /usr/local/lib            /usr/local/lib
     --ro-bind /usr/libexec              /usr/libexec
     --ro-bind /usr/include              /usr/include
+    --ro-bind /sys                      /sys
 
     # --- /etc fragments ---
     --ro-bind /etc/alternatives         /etc/alternatives
@@ -159,6 +160,10 @@ BWRAP_ARGS=(
     # --- .local/bin (ro) — mise, env, etc; claude bound over it below ---
     --ro-bind-try "$REAL_HOME/.local/bin"     /home/sandbox/.local/bin
 
+    # --- nix store + profile (ro) — needed for various nix-installed tools ---
+    --ro-bind-try /nix/store                  /nix/store
+    --ro-bind-try "$REAL_HOME/.nix-profile"   /home/sandbox/.nix-profile
+
     # --- misc dotfiles (ro) ---
     --ro-bind-try "$REAL_HOME/.gitconfig"     /home/sandbox/.gitconfig
 
@@ -194,7 +199,7 @@ BWRAP_ARGS=(
     # --- environment ---
     --clearenv
     --setenv HOME  /home/sandbox
-    --setenv PATH  "/home/sandbox/.local/bin:/home/sandbox/.cargo/bin:/home/sandbox/.local/share/mise/installs/node/${NODE_VERSION}/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+    --setenv PATH  "/home/sandbox/.local/bin:/home/sandbox/.nix-profile/bin:/home/sandbox/.cargo/bin:/home/sandbox/.local/share/mise/installs/node/${NODE_VERSION}/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
     --setenv TERM  "${TERM:-xterm-256color}"
     --setenv LANG  "${LANG:-en_US.UTF-8}"
     --setenv USER  "sandbox"
