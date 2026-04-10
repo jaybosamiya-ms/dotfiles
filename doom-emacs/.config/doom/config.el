@@ -1024,12 +1024,25 @@ between `All locations` and `Errors only`."
 ;; In jj, @ is the working copy commit itself, so vc-working-revision returns
 ;; @'s change ID. diff-hl then diffs the buffer against @, which after save is
 ;; identical (no diff). We need to diff against @- (parent of working copy).
+;; We resolve @- to a concrete change ID so diff-hl's temp file cache
+;; invalidates when the parent changes (e.g. after `jj new`).
 (after! diff-hl
-  (add-hook! 'diff-hl-mode-hook
-    (defun +jj-set-reference-revision-h ()
-      (when (and buffer-file-name
-                 (eq (vc-backend buffer-file-name) 'JJ))
-        (setq-local diff-hl-reference-revision "@-")))))
+  (defun +jj-resolve-parent-revision ()
+    "Resolve @- to a concrete change ID in the current jj repo."
+    (when-let* ((root (vc-jj-root buffer-file-name))
+                (default-directory root))
+      (car (last (vc-jj--process-lines nil "log" "--no-graph"
+                                       "--revisions" "@-"
+                                       "--template" "change_id"
+                                       "--limit" "1")))))
+  (defadvice! +jj-refresh-reference-revision-a (&rest _)
+    :before #'diff-hl-update
+    (when (and buffer-file-name
+               (eq (vc-backend buffer-file-name) 'JJ))
+      (setq-local diff-hl-reference-revision
+                  (+jj-resolve-parent-revision))))
+  (map! "C-c [" #'diff-hl-previous-hunk
+        "C-c ]" #'diff-hl-next-hunk))
 
 ;; Scrypage config
 (use-package! scrypage-mode
