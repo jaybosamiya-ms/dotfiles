@@ -127,6 +127,9 @@
 ;; (package! majutsu
 ;;   :recipe (:host github :repo "0WD0/majutsu"))
 
+;; VC backend for jujutsu (enables diff-hl gutter support for jj repos)
+(package! vc-jj)
+
 ;; Add scrypage support
 (package! scrypage-mode
   :recipe

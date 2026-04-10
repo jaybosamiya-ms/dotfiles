@@ -1014,6 +1014,23 @@ between `All locations` and `Errors only`."
   :bind (:map dired-mode-map
               ("I" . dired-kill-subdir)))
 
+;; Prefer JJ over Git in colocated repos
+;;
+;; Technically this should be "JJ Git SVN Hg" or similar, but I am only using JJ
+;; and Git anyways :)
+(after! vc
+  (setq vc-handled-backends '(JJ Git)))
+
+;; In jj, @ is the working copy commit itself, so vc-working-revision returns
+;; @'s change ID. diff-hl then diffs the buffer against @, which after save is
+;; identical (no diff). We need to diff against @- (parent of working copy).
+(after! diff-hl
+  (add-hook! 'diff-hl-mode-hook
+    (defun +jj-set-reference-revision-h ()
+      (when (and buffer-file-name
+                 (eq (vc-backend buffer-file-name) 'JJ))
+        (setq-local diff-hl-reference-revision "@-")))))
+
 ;; Scrypage config
 (use-package! scrypage-mode
   :bind ("C-c C-s" . scrypage-query))
