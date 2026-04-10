@@ -123,6 +123,18 @@
 (package! hotcrp-review-mode
   :recipe (:host github :repo "jaybosamiya/hotcrp-review-mode.el"))
 
+;; ;; Support for jujutsu a la magit
+;; (package! majutsu
+;;   :recipe (:host github :repo "0WD0/majutsu"))
+
+;; Add scrypage support
+(package! scrypage-mode
+  :recipe
+  (if (file-directory-p "/home/jayb/temp/scrypage")
+      '(:local-repo "/home/jayb/temp/scrypage"
+        :build (:not compile))
+    '(:host github :repo "jaybosamiya/scrypage")))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;; To install a package with Doom you must declare them here and run 'doom sync'

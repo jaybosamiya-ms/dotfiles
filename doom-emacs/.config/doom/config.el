@@ -1013,3 +1013,7 @@ between `All locations` and `Errors only`."
 (use-package! dired
   :bind (:map dired-mode-map
               ("I" . dired-kill-subdir)))
+
+;; Scrypage config
+(use-package! scrypage-mode
+  :bind ("C-c C-s" . scrypage-query))
