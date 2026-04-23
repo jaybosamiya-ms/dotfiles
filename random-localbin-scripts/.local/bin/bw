@@ -110,6 +110,7 @@ BWRAP_ARGS=(
     --ro-bind /usr/share/zoneinfo       /usr/share/zoneinfo
     --ro-bind /usr/share/zsh            /usr/share/zsh
     --ro-bind /usr/share/zsh-autosuggestions /usr/share/zsh-autosuggestions
+    --ro-bind /usr/share/rr             /usr/share/rr
 
     # --- man / groff ---
     --ro-bind-try /etc/manpath.config   /etc/manpath.config
@@ -152,6 +153,7 @@ BWRAP_ARGS=(
     --ro-bind-try "$REAL_HOME/.cargo/config.toml"  /home/sandbox/.cargo/config.toml
     --bind-try    "$REAL_HOME/.cargo/registry"     /home/sandbox/.cargo/registry
     --bind-try    "$REAL_HOME/.cargo/git"          /home/sandbox/.cargo/git
+    --tmpfs                                        /home/sandbox/.rustup/tmp
 
     # --- mise (ro) ---
     --ro-bind-try "$REAL_HOME/.local/share/mise" /home/sandbox/.local/share/mise
