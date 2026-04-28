@@ -58,6 +58,33 @@ zle -N __helper_function_for_ctrl_h
 # Switch Meta-l back to lower-caseing things, rather than running "ls^J" for whatever reason
 bindkey '^[l' down-case-word
 
+# Add Meta-j to have a nice way to pick up jujutsu revisions
+_fzf_insert_jj_commit() {
+  local rev
+  local template='"\x1f" ++ change_id.shortest() ++ "\x1f" ++ builtin_log_oneline'
+
+  rev=$(jj log --color=always -T "$template" \
+        | fzf --height=40% --min-height=15 --cycle --ansi --prompt "jj rev> " \
+              --layout=reverse \
+              --header $'enter: select  |  ctrl-a: all()  |  ctrl-d: default revset  |  esc: cancel' \
+              --delimiter=$'\x1f' --with-nth='1,3..' --accept-nth=2 \
+              --bind 'enter:transform:[ -n {2} ] && echo accept || echo ignore' \
+              --bind "ctrl-a:reload(jj log -r 'all()' --color=always -T '$template')" \
+              --bind "ctrl-d:reload(jj log --color=always -T '$template')" \
+              --preview '[ -n {2} ] && jj show --color=always {2}' \
+              --preview-window='right:60%')
+
+  if [[ -n $rev ]]; then
+    local lpad="" rpad=""
+    [[ -n $LBUFFER && ${LBUFFER: -1} != ' ' ]] && lpad=' '
+    [[ -n $RBUFFER && ${RBUFFER:0:1} != ' ' ]] && rpad=' '
+    LBUFFER+="${lpad}${rev}${rpad}"
+  fi
+  zle reset-prompt
+}
+zle -N _fzf_insert_jj_commit
+bindkey '^[j' _fzf_insert_jj_commit
+
 # Useful utility function
 function _unwrap_or {
     default="$1"
