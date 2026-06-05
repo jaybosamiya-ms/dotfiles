@@ -53,6 +53,8 @@ diff-expected-exit-codes = [0, 1]
 git_push_bookmark = '"jayb/push-" ++ change_id.short()'
 
 # Add the diff as part of when attempting to draft a commit description
+# jj 0.39.0 added builtin_draft_commit_description_with_diff, which may be
+# worth switching to if this custom template stops carrying its weight.
 draft_commit_description = '''
 concat(
   description,
@@ -80,6 +82,9 @@ diffd = ["diff", "--tool=delta"]
 # Convenience alias to resolve conflicts via mergiraf (cargo binstall mergiraf)
 resolvem = ["resolve", "--tool=mergiraf"]
 
+# Convenience alias for a quick `jj diff --stats -r`
+d = ["diff", "--stat", "-r"]
+
 # Convenience way of looking at only stuff related to the current branch. Use
 # `jj log` for the full "normal" log.
 l = [
@@ -92,6 +97,8 @@ wl = ["util", "exec", "--", "watch", "-n", "0.1", "jj", "l", "--color=always", "
 
 # Fast forward my latest bookmark on the current branch to the latest non-empty
 # (or merge) commit.
+# jj 0.39.0 added `jj bookmark advance`, which may eventually cover this use
+# case with built-in behavior.
 ff = [
   "bookmark", "move",
   "--from", "latest(bookmarks(jayb*) & ancestors(@))",
@@ -99,6 +106,7 @@ ff = [
 ]
 
 # Same as `jj ff` but for main in particular
+# See the `jj bookmark advance` note above.
 ffm = [
   "bookmark", "move",
   "--from", "latest(bookmarks(main) & ancestors(@))",
