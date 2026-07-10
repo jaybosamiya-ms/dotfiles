@@ -27,6 +27,14 @@ fi
 CLAUDE_REAL=$(readlink -f "$REAL_HOME/.local/bin/claude")
 
 # ---------------------------------------------------------------------------
+# Ensure pi has an existing persistent writable config/session directory
+# ---------------------------------------------------------------------------
+if [[ ! -d "$REAL_HOME/.pi" ]]; then
+    echo "$PROG: $REAL_HOME/.pi not found" >&2
+    exit 1
+fi
+
+# ---------------------------------------------------------------------------
 # Open .claude.json on fd 3 before we enter the sandbox
 # ---------------------------------------------------------------------------
 if [[ ! -f "$REAL_HOME/.claude.json" ]]; then
@@ -48,7 +56,24 @@ exec 5< <(printf 'sandbox:x:%s:\n' "$REAL_GID")
 # ---------------------------------------------------------------------------
 HOST_USER="${USER:-$(id -un)}"
 
-NODE_VERSION="22.11.0"
+NODE_VERSION="24.17.0"
+
+# ---------------------------------------------------------------------------
+# Preserve active mise tool PATH entries from the host shell.
+# ---------------------------------------------------------------------------
+MISE_PATH_PREFIX=""
+IFS=: read -r -a HOST_PATH_ENTRIES <<< "${PATH:-}"
+for entry in "${HOST_PATH_ENTRIES[@]}"; do
+    if [[ "$entry" == "$REAL_HOME/.local/share/mise/"* && -d "$entry" ]]; then
+        sandbox_entry="/home/sandbox${entry#"$REAL_HOME"}"
+        case ":$MISE_PATH_PREFIX" in
+            *":$sandbox_entry:"*) ;;
+            *) MISE_PATH_PREFIX+="$sandbox_entry:" ;;
+        esac
+    fi
+done
+SANDBOX_BASE_PATH="/home/sandbox/.local/bin:/home/sandbox/.nix-profile/bin:/home/sandbox/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+SANDBOX_PATH="${MISE_PATH_PREFIX}/home/sandbox/.local/bin:/home/sandbox/.nix-profile/bin:/home/sandbox/.cargo/bin:/home/sandbox/.local/share/mise/installs/node/${NODE_VERSION}/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 # ---------------------------------------------------------------------------
 # Build bwrap argument array
@@ -131,6 +156,7 @@ BWRAP_ARGS=(
     --dir /home/sandbox/.local/bin
     --dir /home/sandbox/.local/share
     --dir /home/sandbox/.claude
+    --dir /home/sandbox/.pi
     --dir /home/sandbox/.config
 
     # --- dotfiles (ro, symlink targets) ---
@@ -157,7 +183,13 @@ BWRAP_ARGS=(
 
     # --- mise (ro) ---
     --ro-bind-try "$REAL_HOME/.local/share/mise" /home/sandbox/.local/share/mise
+    # Some mise-installed tools contain absolute symlinks back to the host
+    # mise tree. Keep that target available read-only too.
+    --ro-bind-try "$REAL_HOME/.local/share/mise" "$REAL_HOME/.local/share/mise"
     --ro-bind-try "$REAL_HOME/.config/mise"      /home/sandbox/.config/mise
+
+    # --- pi extensions (rw) ---
+    --bind-try    "$REAL_HOME/.config/pi-extensions" /home/sandbox/.config/pi-extensions
 
     # --- .local/bin (ro) — mise, env, etc; claude bound over it below ---
     --ro-bind-try "$REAL_HOME/.local/bin"     /home/sandbox/.local/bin
@@ -165,6 +197,9 @@ BWRAP_ARGS=(
     # --- nix store + profile (ro) — needed for various nix-installed tools ---
     --ro-bind-try /nix/store                  /nix/store
     --ro-bind-try "$REAL_HOME/.nix-profile"   /home/sandbox/.nix-profile
+
+    # --- Verus install (ro) — ~/.local/bin/{cargo-verus,verus} symlink here ---
+    --ro-bind-try "$REAL_HOME/projects/verus/verus/main/source/target-verus/release" /home/jayb/projects/verus/verus/main/source/target-verus/release
 
     # --- misc dotfiles (ro) ---
     --ro-bind-try "$REAL_HOME/.gitconfig"     /home/sandbox/.gitconfig
@@ -174,6 +209,9 @@ BWRAP_ARGS=(
 
     # --- .claude data dir (rw) ---
     --bind "$REAL_HOME/.claude"           /home/sandbox/.claude
+
+    # --- pi config, auth, and session state (rw) ---
+    --bind "$REAL_HOME/.pi"               /home/sandbox/.pi
 
     # --- .claude.json via fd ---
     --file 3                              /home/sandbox/.claude.json
@@ -188,6 +226,8 @@ BWRAP_ARGS=(
     --ro-bind-try "$REAL_HOME/.cache/p10k-${HOST_USER}"                        /home/sandbox/.cache/p10k-${HOST_USER}
     --ro-bind-try "$REAL_HOME/.cache/gitstatus"                        /home/sandbox/.cache/gitstatus
 
+    --ro-bind-try "$REAL_HOME/.cache/dblp" /home/sandbox/.cache/dblp
+
     # --- opencode state (rw) ---
     --bind "$REAL_HOME/.local/share/opencode"   /home/sandbox/.local/share/opencode
     --bind "$REAL_HOME/.local/state/opencode"   /home/sandbox/.local/state/opencode
@@ -201,7 +241,8 @@ BWRAP_ARGS=(
     # --- environment ---
     --clearenv
     --setenv HOME  /home/sandbox
-    --setenv PATH  "/home/sandbox/.local/bin:/home/sandbox/.nix-profile/bin:/home/sandbox/.cargo/bin:/home/sandbox/.local/share/mise/installs/node/${NODE_VERSION}/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+    --setenv PATH  "$SANDBOX_PATH"
+    --setenv __MISE_ORIG_PATH "$SANDBOX_BASE_PATH"
     --setenv TERM  "${TERM:-xterm-256color}"
     --setenv LANG  "${LANG:-en_US.UTF-8}"
     --setenv USER  "sandbox"
@@ -210,6 +251,8 @@ BWRAP_ARGS=(
     # Redirect cargo build artifacts into the tmpfs so they don't escape the sandbox
     --setenv CARGO_TARGET_DIR      /tmp/cargo-target
     --setenv CARGO_BUILD_BUILD_DIR /tmp/cargo-build
+    # TEMP FOR LITEBOX
+    --setenv OUT_DIR /tmp
 )
 
 if [[ "${1:-}" == -h || "${1:-}" == --help ]]; then
@@ -228,10 +271,11 @@ if [[ "${1:-}" == --run ]]; then
     exec /usr/bin/bwrap "${BWRAP_ARGS[@]}" /usr/bin/zsh -l -c "$*"
 fi
 
-CHOICE=$(printf 'shell\nclaude\nopencode\n' | fzf --prompt="$PROG> " --no-sort --reverse --height=8 --border) || exit 1
+CHOICE=$(printf 'shell\nclaude\npi\nopencode\n' | fzf --prompt="$PROG> " --no-sort --reverse --height=8 --border) || exit 1
 
 case "$CHOICE" in
     shell)    exec /usr/bin/bwrap "${BWRAP_ARGS[@]}" /usr/bin/zsh -l ;;
     claude)   exec /usr/bin/bwrap "${BWRAP_ARGS[@]}" /usr/bin/zsh -l -c "/home/sandbox/.local/bin/claude --dangerously-skip-permissions" ;;
+    pi)       exec /usr/bin/bwrap "${BWRAP_ARGS[@]}" /usr/bin/zsh -l -c "/home/sandbox/.local/share/mise/installs/node/${NODE_VERSION}/bin/pi" ;;
     opencode) exec /usr/bin/bwrap "${BWRAP_ARGS[@]}" /usr/bin/zsh -l -c "/home/sandbox/.local/share/mise/installs/node/${NODE_VERSION}/bin/opencode" ;;
 esac
