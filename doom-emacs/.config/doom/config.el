@@ -1049,3 +1049,6 @@ between `All locations` and `Errors only`."
 ;; Scrypage config
 (use-package! scrypage-mode
   :bind ("C-c C-s" . scrypage-query))
+
+;; Opencode Mode config
+(use-package! opencode-mode)

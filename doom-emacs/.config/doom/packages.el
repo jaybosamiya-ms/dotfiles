@@ -138,6 +138,14 @@
         :build (:not compile))
     '(:host github :repo "jaybosamiya/scrypage")))
 
+;; Add opencode-mode support
+(package! opencode-mode
+  :recipe
+  (if (file-directory-p "/home/jayb/temp/opencode-mode.el")
+      '(:local-repo "/home/jayb/temp/opencode-mode.el"
+        :build (:not compile))
+    '(:host github :repo "jaybosamiya/opencode-mode.el")))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;; To install a package with Doom you must declare them here and run 'doom sync'
