@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+
+set -u
+
+version='0.1.0'
+
+usage() {
+  cat <<EOF
+usage: ${0##*/} [--help] [--version] <rg-args...>
+
+Run rg, browse matches in fzf with a bat preview, and print the selected file.
+
+Keys: ↑/↓ move, PgUp/PgDn scroll preview, Enter select, q quit.
+
+Options:
+  -h, --help     show help
+  -V, --version  show version
+EOF
+}
+
+case "${1-}" in
+  -h|--help)
+    usage
+    exit 0
+    ;;
+  -V|--version)
+    printf '%s %s\n' "${0##*/}" "$version"
+    exit 0
+    ;;
+esac
+
+if (($# == 0)); then
+  usage >&2
+  exit 2
+fi
+
+missing=0
+for cmd in rg fzf bat; do
+  if ! command -v "$cmd" >/dev/null 2>&1; then
+    printf '%s: missing dependency: %s\n' "${0##*/}" "$cmd" >&2
+    missing=1
+  fi
+done
+((missing == 0)) || exit 127
+
+sep=$'\t'
+
+selected=$(
+  rg --vimgrep \
+    --field-match-separator "$sep" \
+    --field-context-separator "$sep" \
+    --no-require-git \
+    "$@" |
+    fzf --ansi \
+      --no-input \
+      --no-mouse \
+      --info=hidden \
+      --no-separator \
+      --header='↑/↓ results · PgUp/PgDn preview · Enter select · q quit' \
+      --layout=reverse-list \
+      --no-sort \
+      --bind='q:abort,page-up:preview-up,page-down:preview-down' \
+      --delimiter="$sep" \
+      --with-nth=1,2,3,4.. \
+      --preview='bat --color=always --style=numbers --wrap=never --highlight-line {2} {1}' \
+      --preview-window='left,60%,border-right,+{2}/2'
+)
+fzf_status=$?
+
+if ((fzf_status != 0)) || [[ -z "$selected" ]]; then
+  exit "$fzf_status"
+fi
+
+IFS=$'\t' read -r file line _column _match <<<"$selected"
+
+if [[ -z "$file" || ! "$line" =~ ^[0-9]+$ ]]; then
+  printf '%s: could not parse selected ripgrep result: %s\n' "${0##*/}" "$selected" >&2
+  exit 1
+fi
+
+printf '%s\n' "$file"
