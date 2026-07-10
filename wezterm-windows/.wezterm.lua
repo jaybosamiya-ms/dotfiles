@@ -8,6 +8,7 @@ config.front_end = "OpenGL"
 config.canonicalize_pasted_newlines = "CarriageReturn"
 
 config.window_decorations = "RESIZE"
+config.enable_scroll_bar = true
 
 config.initial_cols = 120
 config.initial_rows = 28
@@ -40,6 +41,19 @@ local directions = {
   Right = 'RightArrow',
 }
 config.keys = {}
+
+table.insert(config.keys, {
+  key = 'Enter',
+  mods = 'ALT',
+  action = wezterm.action.DisableDefaultAssignment,
+})
+
+table.insert(config.keys, {
+  key = 'F11',
+  mods = 'NONE',
+  action = wezterm.action.ToggleFullScreen,
+})
+
 for dir, key in pairs(directions) do
   table.insert(config.keys, {
     key = key,
