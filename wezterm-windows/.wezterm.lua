@@ -1,6 +1,14 @@
 local wezterm = require 'wezterm'
 local config = wezterm.config_builder()
 
+config.wsl_domains = {
+  {
+    name = 'WSL:Ubuntu',
+    distribution = 'Ubuntu',
+    default_cwd = '~',
+    default_prog = { 'tmux', 'new-session', '-A', '-s', 'main' },
+  },
+}
 config.default_domain = 'WSL:Ubuntu'
 config.front_end = "OpenGL"
 
@@ -8,7 +16,7 @@ config.front_end = "OpenGL"
 config.canonicalize_pasted_newlines = "CarriageReturn"
 
 config.window_decorations = "RESIZE"
-config.enable_scroll_bar = true
+config.enable_scroll_bar = false
 
 config.initial_cols = 120
 config.initial_rows = 28
@@ -34,12 +42,12 @@ config.colors = {
 config.scrollback_lines = 10000000
 
 -- Add split-pane and navigation keybindings
-local directions = {
-  Up = 'UpArrow',
-  Down = 'DownArrow',
-  Left = 'LeftArrow',
-  Right = 'RightArrow',
-}
+-- local directions = {
+--   Up = 'UpArrow',
+--   Down = 'DownArrow',
+--   Left = 'LeftArrow',
+--   Right = 'RightArrow',
+-- }
 config.keys = {}
 
 table.insert(config.keys, {
@@ -54,20 +62,33 @@ table.insert(config.keys, {
   action = wezterm.action.ToggleFullScreen,
 })
 
-for dir, key in pairs(directions) do
-  table.insert(config.keys, {
-    key = key,
-    mods = 'ALT|SHIFT',
-    action = wezterm.action.SplitPane {
-      direction = dir,
-      size = { Percent = 50 },
-    },
-  })
-  table.insert(config.keys, {
-    key = key,
-    mods = 'ALT',
-    action = wezterm.action.ActivatePaneDirection(dir),
-  })
+-- for dir, key in pairs(directions) do
+--   table.insert(config.keys, {
+--     key = key,
+--     mods = 'ALT|SHIFT',
+--     action = wezterm.action.SplitPane {
+--       direction = dir,
+--       size = { Percent = 50 },
+--     },
+--   })
+--   table.insert(config.keys, {
+--     key = key,
+--     mods = 'ALT',
+--     action = wezterm.action.ActivatePaneDirection(dir),
+--   })
+-- end
+-- Translate shortcuts into tmux commands
+for _, key_binding in ipairs {
+  { key = 'c', mods = 'CTRL|SHIFT', action = wezterm.action.SendString '\x1ay' },
+  { key = 't', mods = 'CTRL|SHIFT', action = wezterm.action.SendString '\x1at' },
+  { key = 'Tab', mods = 'CTRL', action = wezterm.action.SendString '\x1a]' },
+  { key = 'Tab', mods = 'CTRL|SHIFT', action = wezterm.action.SendString '\x1a[' },
+  { key = 'PageUp', mods = 'CTRL', action = wezterm.action.SendString '\x1a[' },
+  { key = 'PageDown', mods = 'CTRL', action = wezterm.action.SendString '\x1a]' },
+  { key = 'PageUp', mods = 'CTRL|SHIFT', action = wezterm.action.SendString '\x1a{' },
+  { key = 'PageDown', mods = 'CTRL|SHIFT', action = wezterm.action.SendString '\x1a}' },
+} do
+  table.insert(config.keys, key_binding)
 end
 
 -- Add mouse bindings to disable plain-click link opening and enable Ctrl-click
