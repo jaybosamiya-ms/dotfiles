@@ -100,8 +100,25 @@ config.mouse_bindings = {
     action = wezterm.action.Nop,
   },
   {
+    event = { Down = { streak = 1, button = 'Left' } },
+    mods = 'CTRL',
+    action = wezterm.action.Nop,
+  },
+  {
     event = { Up = { streak = 1, button = 'Left' } },
     mods = 'CTRL',
+    action = wezterm.action.OpenLinkAtMouseCursor,
+  },
+  {
+    event = { Down = { streak = 1, button = 'Left' } },
+    mods = 'CTRL',
+    mouse_reporting = true,
+    action = wezterm.action.Nop,
+  },
+  {
+    event = { Up = { streak = 1, button = 'Left' } },
+    mods = 'CTRL',
+    mouse_reporting = true,
     action = wezterm.action.OpenLinkAtMouseCursor,
   },
 }
