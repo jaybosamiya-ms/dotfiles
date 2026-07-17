@@ -1,12 +1,31 @@
 local wezterm = require 'wezterm'
 local config = wezterm.config_builder()
 
+local tmux_command = [[
+if ! tmux has-session -t main 2>/dev/null ||
+   [ "$(tmux display-message -p -t main '#{session_attached}')" -eq 0 ]; then
+  exec tmux new-session -A -s main
+fi
+
+secondary="$(
+  tmux list-sessions -F '#{?session_last_attached,#{session_last_attached},#{session_activity}} #{session_attached} #{session_name}' |
+    awk '$2 == 0 && $3 ~ /^wezterm-/ { print $1, $3 }' |
+    sort -nr |
+    awk 'NR == 1 { print $2 }'
+)"
+if [ -n "$secondary" ]; then
+  exec tmux attach-session -t "$secondary"
+fi
+
+exec tmux new-session -s "wezterm-$(date +%s)-$$"
+]]
+
 config.wsl_domains = {
   {
     name = 'WSL:Ubuntu',
     distribution = 'Ubuntu',
     default_cwd = '~',
-    default_prog = { 'tmux', 'new-session', '-A', '-s', 'main' },
+    default_prog = { 'sh', '-c', tmux_command },
   },
 }
 config.default_domain = 'WSL:Ubuntu'
