@@ -1026,16 +1026,28 @@ between `All locations` and `Errors only`."
 ;; In jj, @ is the working copy commit itself, so vc-working-revision returns
 ;; @'s change ID. diff-hl then diffs the buffer against @, which after save is
 ;; identical (no diff). We need to diff against @- (parent of working copy).
-;; We resolve @- to a concrete change ID so diff-hl's temp file cache
-;; invalidates when the parent changes (e.g. after `jj new`).
+;; We resolve @- to a concrete commit ID so diff-hl's temp file cache
+;; invalidates when the parent changes (e.g. after `jj new'). It must be the
+;; commit ID, not the change ID: diff-hl keys its cached reference file by the
+;; revision string and only refetches when that file is absent, but a jj change
+;; ID survives rewrites of its own content (`jj squash', `jj describe', ...),
+;; so caching by change ID serves stale content and the fringe then reports
+;; @-'s own edits as uncommitted.
+;;
+;; diff-hl 6938d20 (2025-10-17) resolves @- natively via
+;; `diff-hl-head-revision-alist' and `diff-hl-resolved-revision', but uses the
+;; change ID and so has the staleness bug above; dgutov/diff-hl#293 switches it
+;; to the commit ID. Delete this block once that lands and Doom's pin has it.
 (after! diff-hl
   (defun +jj-resolve-parent-revision ()
-    "Resolve @- to a concrete change ID in the current jj repo."
+    "Resolve @- to a concrete commit ID in the current jj repo."
     (when-let* ((root (vc-jj-root buffer-file-name))
                 (default-directory root))
+      ;; first_parent() rather than "@-" picks a single parent when the working
+      ;; copy is a merge; `last' because jj may print warnings before output.
       (car (last (vc-jj--process-lines nil "log" "--no-graph"
-                                       "--revisions" "@-"
-                                       "--template" "change_id"
+                                       "--revisions" "first_parent(@)"
+                                       "--template" "commit_id"
                                        "--limit" "1")))))
   (defadvice! +jj-refresh-reference-revision-a (&rest _)
     :before #'diff-hl-update
