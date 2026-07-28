@@ -173,6 +173,9 @@ BWRAP_ARGS=(
     # --- rustup toolchains (ro) ---
     --ro-bind-try "$REAL_HOME/.rustup"            /home/sandbox/.rustup
 
+    # --- lean toolchain (ro) ---
+    --ro-bind-try "$REAL_HOME/.elan"              /home/sandbox/.elan
+
     # --- cargo: base ro, mutable cache/index dirs rw ---
     --ro-bind-try "$REAL_HOME/.cargo/env"          /home/sandbox/.cargo/env
     --ro-bind-try "$REAL_HOME/.cargo/bin"          /home/sandbox/.cargo/bin
