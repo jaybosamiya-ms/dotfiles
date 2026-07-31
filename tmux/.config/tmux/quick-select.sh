@@ -19,11 +19,6 @@ set -uo pipefail
 
 self=$(readlink -f "$0" 2>/dev/null || echo "$0")
 
-# Column arithmetic below assumes characters, not bytes.
-if [ -z "${LC_ALL:-}" ] && [ -z "${LC_CTYPE:-}" ] && [ "${LANG:-}" != *UTF-8* ]; then
-  export LC_ALL=C.UTF-8
-fi
-
 # What counts as selectable. Kept in one place; used as a dynamic regex by awk,
 # so it must stay POSIX ERE (no \b, no \d).
 QS_RE='(https?|ftp|file|ssh|git)://[^][:space:]"'"'"'`<>|(){}]+'
@@ -63,15 +58,17 @@ pane=$2
 map=$(mktemp "${TMPDIR:-/tmp}/tmux-quick-select.XXXXXX")
 trap 'rm -f "$map"' EXIT
 
-read -r window win_width win_height <<<"$(tmux display-message -p -t "$pane" \
-  '#{window_id} #{window_width} #{window_height}')"
+window=$(tmux display-message -p -t "$pane" '#{window_id}')
 
+# Border glyphs: vertical, horizontal, then the corners and tees, matching the
+# window's pane-border-lines setting.
 case $(tmux show-options -gv pane-border-lines 2>/dev/null) in
-  heavy)  vline='┃'; hline='━' ;;
-  double) vline='║'; hline='═' ;;
-  simple) vline='|'; hline='-' ;;
-  *)      vline='│'; hline='─' ;;
+  heavy)  glyphs='┃ ━ ┏ ┓ ┗ ┛ ┣ ┫ ┻ ┳ ╋' ;;
+  double) glyphs='║ ═ ╔ ╗ ╚ ╝ ╠ ╣ ╩ ╦ ╬' ;;
+  simple) glyphs='| - + + + + + + + + +' ;;
+  *)      glyphs='│ ─ ┌ ┐ └ ┘ ├ ┤ ┴ ┬ ┼' ;;
 esac
+read -r b_v b_h b_dr b_dl b_ur b_ul b_udr b_udl b_ulr b_dlr b_all <<<"$glyphs"
 
 # Rebuild the window: every pane's visible text placed at its own offset. Panes
 # scrolled up in copy mode contribute what is on screen there (scroll_position
@@ -90,10 +87,13 @@ compose() {
   done
 }
 
-overlay=$(compose | awk -v MAP="$map" -v WW="$win_width" -v WH="$win_height" \
-                       -v VLINE="$vline" -v HLINE="$hline" '
+overlay=$(compose | awk -v MAP="$map" \
+  -v B_V="$b_v" -v B_H="$b_h" -v B_DR="$b_dr" -v B_DL="$b_dl" -v B_UR="$b_ur" \
+  -v B_UL="$b_ul" -v B_UDR="$b_udr" -v B_UDL="$b_udl" -v B_ULR="$b_ulr" \
+  -v B_DLR="$b_dlr" -v B_ALL="$b_all" '
 BEGIN {
-  FS = "\t"
+  FS   = "\t"
+  ORS  = ""
   RE   = ENVIRON["QS_RE"]
   # Home row first, then the rest of the alphabet.
   ALPH = "asdfjklghqwertyuiopzxcvbnm"
@@ -101,46 +101,48 @@ BEGIN {
   HIT   = "\033[38;5;110m"
   HINT  = "\033[1;38;5;232;48;5;215m"
   RESET = "\033[0m"
-  blank = sprintf("%" WW "s", "")
-  for (r = 1; r <= WH; r++) G[r] = blank
 }
 
-function put(r, c, text,   w) {
-  if (r < 1 || r > WH || c > WW) return
-  w = length(text)
-  if (c < 1) { text = substr(text, 2 - c); w = length(text); c = 1 }
-  if (c + w - 1 > WW) { text = substr(text, 1, WW - c + 1); w = length(text) }
-  if (w <= 0) return
-  G[r] = substr(G[r], 1, c - 1) text substr(G[r], c + w)
+# Each pane line is drawn where tmux drew it, using absolute cursor moves, and
+# is never padded. That keeps wide characters (emoji, CJK) harmless: the
+# terminal measures them exactly as tmux did, and nothing can reflow.
+function at(row, col) { return sprintf("\033[%d;%dH", row + 1, col + 1) }
+
+# Border glyph for a cell, from its up/down/left/right connections.
+function glyph(m) {
+  if (m == 10) return B_DR
+  if (m == 6)  return B_DL
+  if (m == 9)  return B_UR
+  if (m == 5)  return B_UL
+  if (m == 11) return B_UDR
+  if (m == 7)  return B_UDL
+  if (m == 13) return B_ULR
+  if (m == 14) return B_DLR
+  if (m == 15) return B_ALL
+  if (m == 4 || m == 8 || m == 12) return B_H
+  return B_V
 }
 
 $1 == "P" {
   np++
-  pid[np] = $2; pleft[np] = $3; ptop[np] = $4; pw[np] = $5; ph[np] = $6
+  pid[np] = $2; pleft[np] = $3; ptop[np] = $4; pwid[np] = $5; phgt[np] = $6
   prow = 0
   next
 }
 $1 == "L" {
-  put(ptop[np] + prow + 1, pleft[np] + 1, substr($0, 3))
+  nl++
+  ltext[nl] = substr($0, 3)
+  lrow[nl]  = ptop[np] + prow
+  lcol[nl]  = pleft[np]
   prow++
   next
 }
 
 END {
-  # Pane borders, so the overlay looks like the window it covers.
-  for (p = 1; p <= np; p++) {
-    if (pleft[p] > 0)
-      for (r = ptop[p] + 1; r <= ptop[p] + ph[p]; r++) put(r, pleft[p], VLINE)
-    if (ptop[p] > 0) {
-      bar = ""
-      for (i = 0; i < pw[p]; i++) bar = bar HLINE
-      put(ptop[p], pleft[p] + 1, bar)
-    }
-  }
-
+  # Collect matches, remembering the window row/column of each line they sit on.
   n = 0
-  for (r = 1; r <= WH; r++) {
-    s = G[r]; pos = 1
+  for (j = 1; j <= nl; j++) {
+    s = ltext[j]; pos = 1
     while (pos <= length(s)) {
       rest = substr(s, pos)
       if (!match(rest, RE)) break
@@ -152,48 +154,69 @@ END {
       prev = (st > 1) ? substr(s, st - 1, 1) : " "
       # A match starting right after a word character is a fragment, not a token.
       if (len >= 2 && prev !~ /[A-Za-z0-9_]/) {
-        n++; mrow[n] = r; mcol[n] = st; mlen[n] = len; mtxt[n] = txt
+        n++; mline[n] = j; mpos[n] = st; mlen[n] = len; mtxt[n] = txt
       }
     }
   }
   if (n == 0) { print "NONE" > MAP; exit }
 
-  # Identical text shares one hint, so repeated tokens do not burn letters.
-  # Hints are handed out bottom-up, so the newest matches get the easiest keys.
-  uniq = 0
-  for (i = n; i >= 1; i--) if (!(mtxt[i] in seen)) { seen[mtxt[i]] = ++uniq }
-  two = (uniq > 26)
-  for (i = n; i >= 1; i--) {
-    k = seen[mtxt[i]]
-    if (two) {
-      a = int((k - 1) / 26) + 1; b = ((k - 1) % 26) + 1
-      hint[i] = substr(ALPH, a, 1) substr(ALPH, b, 1)
-    } else {
-      hint[i] = substr(ALPH, k, 1)
-    }
+  # Order matches bottom-right first, so the newest output gets the easiest
+  # hints regardless of the order tmux lists panes in.
+  for (i = 1; i <= n; i++) { ord[i] = i; key[i] = lrow[mline[i]] * 100000 + lcol[mline[i]] + mpos[i] }
+  for (i = 2; i <= n; i++) {
+    v = ord[i]; k = key[v]; jj = i - 1
+    while (jj >= 1 && key[ord[jj]] < k) { ord[jj + 1] = ord[jj]; jj-- }
+    ord[jj + 1] = v
   }
+
+  # Identical text shares one hint, so repeated tokens do not burn letters.
+  uniq = 0
+  for (i = 1; i <= n; i++) if (!(mtxt[ord[i]] in seen)) seen[mtxt[ord[i]]] = ++uniq
+  two = (uniq > 26)
   for (t in seen) {
     k = seen[t]
     if (two) {
       a = int((k - 1) / 26) + 1; b = ((k - 1) % 26) + 1
-      h = substr(ALPH, a, 1) substr(ALPH, b, 1)
+      label[k] = substr(ALPH, a, 1) substr(ALPH, b, 1)
     } else {
-      h = substr(ALPH, k, 1)
+      label[k] = substr(ALPH, k, 1)
     }
-    printf "%s\t%s\n", h, t > MAP
+    printf "%s\t%s\n", label[k], t > MAP
+  }
+  for (i = 1; i <= n; i++) hint[i] = label[seen[mtxt[i]]]
+
+  # Pane borders, so the overlay looks like the window it covers. Cells are
+  # collected first, then drawn with the glyph their connections call for, which
+  # is how the tees and crosses between panes come out right.
+  for (p = 1; p <= np; p++) {
+    if (pleft[p] > 0)
+      for (r = ptop[p]; r < ptop[p] + phgt[p]; r++) { VS[r, pleft[p] - 1] = 1; cell[r, pleft[p] - 1] = 1 }
+    if (ptop[p] > 0)
+      for (c = pleft[p]; c < pleft[p] + pwid[p]; c++) { HS[ptop[p] - 1, c] = 1; cell[ptop[p] - 1, c] = 1 }
+    if (ptop[p] > 0 && pleft[p] > 0) {
+      VS[ptop[p] - 1, pleft[p] - 1] = 1; HS[ptop[p] - 1, pleft[p] - 1] = 1
+      cell[ptop[p] - 1, pleft[p] - 1] = 1
+    }
+  }
+  for (bc in cell) {
+    split(bc, rc, SUBSEP); r = rc[1] + 0; c = rc[2] + 0
+    m = ((r - 1, c) in VS) + 2 * ((r + 1, c) in VS) + 4 * ((r, c - 1) in HS) + 8 * ((r, c + 1) in HS)
+    print at(r, c) DIM glyph(m) RESET
   }
 
-  for (r = 1; r <= WH; r++) {
-    s = G[r]; out = ""; cur = 1
+  # Pane contents, with hints stamped over the first cell(s) of each match.
+  for (j = 1; j <= nl; j++) {
+    s = ltext[j]
+    if (s == "") continue
+    out = ""; cur = 1
     for (i = 1; i <= n; i++) {
-      if (mrow[i] != r) continue
-      out = out DIM substr(s, cur, mcol[i] - cur)
+      if (mline[i] != j) continue
+      out = out DIM substr(s, cur, mpos[i] - cur)
       h = hint[i]
       out = out HINT h RESET HIT substr(mtxt[i], length(h) + 1) RESET
-      cur = mcol[i] + mlen[i]
+      cur = mpos[i] + mlen[i]
     }
-    out = out DIM substr(s, cur) RESET
-    print out
+    print at(lrow[j], lcol[j]) out DIM substr(s, cur) RESET
   }
 }
 ')
@@ -203,8 +226,8 @@ if [ "$(head -1 "$map" 2>/dev/null)" = NONE ] || [ ! -s "$map" ]; then
   exit 0
 fi
 
-# Draw the overlay without scrolling the last line off.
-printf '\033[2J\033[H%s' "${overlay%$'\n'}"
+# Auto-wrap off means an over-wide line clips instead of reflowing the screen.
+printf '\033[?7l\033[?25l\033[2J%s' "$overlay"
 
 hint_len=$(awk -F'\t' 'NR==1{print length($1); exit}' "$map")
 keys=""
