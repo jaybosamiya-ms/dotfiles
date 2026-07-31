@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # Hint-based quick select, in the spirit of tmux-fingers / WezTerm's quick
-# select. Overlays the current pane with dimmed text, labels every path, URL,
-# hash, IP, ... with a hint letter, and copies the one whose hint you press.
+# select. Overlays the whole window (all panes at once) with dimmed text,
+# labels every path, URL, hash, IP, ... with a hint letter, and copies the one
+# whose hint you press.
 #
 #   lowercase hint  copy to the tmux buffer and the system clipboard
-#   uppercase hint  copy, then paste it into the pane
+#   uppercase hint  copy, then paste it into the active pane
 #   Esc / q / C-c   cancel
 #
 # Modes:
@@ -17,6 +18,11 @@
 set -uo pipefail
 
 self=$(readlink -f "$0" 2>/dev/null || echo "$0")
+
+# Column arithmetic below assumes characters, not bytes.
+if [ -z "${LC_ALL:-}" ] && [ -z "${LC_CTYPE:-}" ] && [ "${LANG:-}" != *UTF-8* ]; then
+  export LC_ALL=C.UTF-8
+fi
 
 # What counts as selectable. Kept in one place; used as a dynamic regex by awk,
 # so it must stay POSIX ERE (no \b, no \d).
@@ -33,8 +39,21 @@ export QS_RE
 # ---------------------------------------------------------------- launcher ---
 if [ "${1:-}" != --hints ]; then
   pane=${1:-${TMUX_PANE:-$(tmux display-message -p '#{pane_id}')}}
-  read -r width height <<<"$(tmux display-message -p -t "$pane" '#{pane_width} #{pane_height}')"
-  tmux display-popup -B -E -t "$pane" -x P -y P -w "$width" -h "$height" \
+  read -r width height status position <<<"$(tmux display-message -p -t "$pane" \
+    '#{window_width} #{window_height} #{status} #{status-position}')"
+
+  # -y is the row *below* the popup (it occupies [y - h, y - 1]), so the window
+  # area has to be offset past a status line sitting above it.
+  case $status in
+    off) lines=0 ;;
+    on)  lines=1 ;;
+    [0-9]*) lines=$status ;;
+    *)   lines=1 ;;
+  esac
+  [ "$position" = top ] || lines=0
+  bottom=$((lines + height))
+
+  tmux display-popup -B -E -t "$pane" -x 0 -y "$bottom" -w "$width" -h "$height" \
     "$(printf '%q %q %q' "$self" --hints "$pane")"
   exit $?
 fi
@@ -44,19 +63,37 @@ pane=$2
 map=$(mktemp "${TMPDIR:-/tmp}/tmux-quick-select.XXXXXX")
 trap 'rm -f "$map"' EXIT
 
-# When the pane is scrolled up in copy mode, capture what is on screen there
-# rather than the bottom of the history. (scroll_position is empty outside copy
-# mode, so query it on its own.)
-height=$(tmux display-message -p -t "$pane" '#{pane_height}')
-scroll=$(tmux display-message -p -t "$pane" '#{scroll_position}')
-if [ -n "$scroll" ] && [ "$scroll" -gt 0 ] 2>/dev/null; then
-  capture=(capture-pane -p -t "$pane" -S "-$scroll" -E "$((height - 1 - scroll))")
-else
-  capture=(capture-pane -p -t "$pane")
-fi
+read -r window win_width win_height <<<"$(tmux display-message -p -t "$pane" \
+  '#{window_id} #{window_width} #{window_height}')"
 
-overlay=$(tmux "${capture[@]}" | awk -v MAP="$map" '
+case $(tmux show-options -gv pane-border-lines 2>/dev/null) in
+  heavy)  vline='┃'; hline='━' ;;
+  double) vline='║'; hline='═' ;;
+  simple) vline='|'; hline='-' ;;
+  *)      vline='│'; hline='─' ;;
+esac
+
+# Rebuild the window: every pane's visible text placed at its own offset. Panes
+# scrolled up in copy mode contribute what is on screen there (scroll_position
+# is empty outside copy mode, so it is queried on its own).
+compose() {
+  tmux list-panes -t "$window" \
+    -F '#{pane_id} #{pane_left} #{pane_top} #{pane_width} #{pane_height}' |
+  while read -r id left top pw ph; do
+    printf 'P\t%s\t%s\t%s\t%s\t%s\n' "$id" "$left" "$top" "$pw" "$ph"
+    scroll=$(tmux display-message -p -t "$id" '#{scroll_position}')
+    if [ -n "$scroll" ] && [ "$scroll" -gt 0 ] 2>/dev/null; then
+      tmux capture-pane -p -t "$id" -S "-$scroll" -E "$((ph - 1 - scroll))"
+    else
+      tmux capture-pane -p -t "$id"
+    fi | sed 's/^/L\t/'
+  done
+}
+
+overlay=$(compose | awk -v MAP="$map" -v WW="$win_width" -v WH="$win_height" \
+                       -v VLINE="$vline" -v HLINE="$hline" '
 BEGIN {
+  FS = "\t"
   RE   = ENVIRON["QS_RE"]
   # Home row first, then the rest of the alphabet.
   ALPH = "asdfjklghqwertyuiopzxcvbnm"
@@ -64,13 +101,46 @@ BEGIN {
   HIT   = "\033[38;5;110m"
   HINT  = "\033[1;38;5;232;48;5;215m"
   RESET = "\033[0m"
+  blank = sprintf("%" WW "s", "")
+  for (r = 1; r <= WH; r++) G[r] = blank
 }
-{ line[NR] = $0 }
+
+function put(r, c, text,   w) {
+  if (r < 1 || r > WH || c > WW) return
+  w = length(text)
+  if (c < 1) { text = substr(text, 2 - c); w = length(text); c = 1 }
+  if (c + w - 1 > WW) { text = substr(text, 1, WW - c + 1); w = length(text) }
+  if (w <= 0) return
+  G[r] = substr(G[r], 1, c - 1) text substr(G[r], c + w)
+}
+
+$1 == "P" {
+  np++
+  pid[np] = $2; pleft[np] = $3; ptop[np] = $4; pw[np] = $5; ph[np] = $6
+  prow = 0
+  next
+}
+$1 == "L" {
+  put(ptop[np] + prow + 1, pleft[np] + 1, substr($0, 3))
+  prow++
+  next
+}
+
 END {
-  rows = NR
+  # Pane borders, so the overlay looks like the window it covers.
+  for (p = 1; p <= np; p++) {
+    if (pleft[p] > 0)
+      for (r = ptop[p] + 1; r <= ptop[p] + ph[p]; r++) put(r, pleft[p], VLINE)
+    if (ptop[p] > 0) {
+      bar = ""
+      for (i = 0; i < pw[p]; i++) bar = bar HLINE
+      put(ptop[p], pleft[p] + 1, bar)
+    }
+  }
+
   n = 0
-  for (r = 1; r <= rows; r++) {
-    s = line[r]; pos = 1
+  for (r = 1; r <= WH; r++) {
+    s = G[r]; pos = 1
     while (pos <= length(s)) {
       rest = substr(s, pos)
       if (!match(rest, RE)) break
@@ -106,14 +176,15 @@ END {
     k = seen[t]
     if (two) {
       a = int((k - 1) / 26) + 1; b = ((k - 1) % 26) + 1
-      printf "%s\t%s\n", substr(ALPH, a, 1) substr(ALPH, b, 1), t > MAP
+      h = substr(ALPH, a, 1) substr(ALPH, b, 1)
     } else {
-      printf "%s\t%s\n", substr(ALPH, k, 1), t > MAP
+      h = substr(ALPH, k, 1)
     }
+    printf "%s\t%s\n", h, t > MAP
   }
 
-  for (r = 1; r <= rows; r++) {
-    s = line[r]; out = ""; cur = 1
+  for (r = 1; r <= WH; r++) {
+    s = G[r]; out = ""; cur = 1
     for (i = 1; i <= n; i++) {
       if (mrow[i] != r) continue
       out = out DIM substr(s, cur, mcol[i] - cur)
