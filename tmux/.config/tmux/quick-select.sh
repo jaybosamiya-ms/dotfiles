@@ -6,7 +6,7 @@
 #
 #   lowercase hint  copy to the tmux buffer and the system clipboard
 #   uppercase hint  copy, then paste it into the active pane
-#   Esc / q / C-c   cancel
+#   Esc / C-c        cancel
 #
 # Modes:
 #   quick-select.sh [pane-id]        launcher: opens the overlay popup
@@ -172,17 +172,26 @@ END {
   # Identical text shares one hint, so repeated tokens do not burn letters.
   uniq = 0
   for (i = 1; i <= n; i++) if (!(mtxt[ord[i]] in seen)) seen[mtxt[ord[i]]] = ++uniq
-  two = (uniq > 26)
-  for (t in seen) {
-    k = seen[t]
-    if (two) {
-      a = int((k - 1) / 26) + 1; b = ((k - 1) % 26) + 1
-      label[k] = substr(ALPH, a, 1) substr(ALPH, b, 1)
-    } else {
-      label[k] = substr(ALPH, k, 1)
-    }
-    printf "%s\t%s\n", label[k], t > MAP
+
+  # Keep as many hints single-letter as possible: only enough trailing letters
+  # are given up as two-letter prefixes to cover what is left over, and those
+  # are used round-robin so consecutive two-letter hints start differently.
+  A = length(ALPH)
+  if (uniq <= A) {
+    singles = uniq; prefixes = 0
+  } else {
+    prefixes = int((uniq - A + A - 2) / (A - 1))
+    if (prefixes > A) prefixes = A
+    singles = A - prefixes
   }
+  for (k = 1; k <= singles; k++) label[k] = substr(ALPH, k, 1)
+  m = 0
+  for (k = singles + 1; k <= uniq; k++) {
+    if (m >= prefixes * A) break
+    label[k] = substr(ALPH, singles + (m % prefixes) + 1, 1) substr(ALPH, int(m / prefixes) + 1, 1)
+    m++
+  }
+  for (t in seen) if (label[seen[t]] != "") printf "%s\t%s\n", label[seen[t]], t > MAP
   for (i = 1; i <= n; i++) hint[i] = label[seen[mtxt[i]]]
 
   # Pane borders, so the overlay looks like the window it covers. Cells are
@@ -210,7 +219,7 @@ END {
     if (s == "") continue
     out = ""; cur = 1
     for (i = 1; i <= n; i++) {
-      if (mline[i] != j) continue
+      if (mline[i] != j || hint[i] == "") continue
       out = out DIM substr(s, cur, mpos[i] - cur)
       h = hint[i]
       out = out HINT h RESET HIT substr(mtxt[i], length(h) + 1) RESET
@@ -229,20 +238,23 @@ fi
 # Auto-wrap off means an over-wide line clips instead of reflowing the screen.
 printf '\033[?7l\033[?25l\033[2J%s' "$overlay"
 
-hint_len=$(awk -F'\t' 'NR==1{print length($1); exit}' "$map")
-keys=""
-for _ in $(seq "$hint_len"); do
+read_key() {
   IFS= read -rsn1 key || exit 0
   case $key in
-    '' | $'\033' | q | $'\003') exit 0 ;;
+    '' | $'\033' | $'\003') exit 0 ;;
+    *[A-Z]*) paste=1; key=$(printf '%s' "$key" | tr '[:upper:]' '[:lower:]') ;;
   esac
-  keys=$keys$key
-done
+}
 
 paste=0
-case $keys in
-  *[A-Z]*) paste=1; keys=$(printf '%s' "$keys" | tr '[:upper:]' '[:lower:]') ;;
-esac
+read_key
+keys=$key
+# Only wait for a second key if the first one is a two-letter hint's prefix.
+if ! awk -F'\t' -v h="$keys" '$1 == h { found = 1 } END { exit !found }' "$map" &&
+   awk -F'\t' -v h="$keys" 'length($1) == 2 && substr($1, 1, 1) == h { found = 1 } END { exit !found }' "$map"; then
+  read_key
+  keys=$keys$key
+fi
 
 selection=$(awk -F'\t' -v h="$keys" '$1 == h { print substr($0, index($0, "\t") + 1); exit }' "$map")
 [ -n "$selection" ] || exit 0
