@@ -1,0 +1,370 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+    cat <<'EOF'
+git-ident - manage per-repo git identities (name/email/ssh key)
+
+Usage:
+  git ident                    show this repo's identity; offer to pick one if unset
+  git ident NAME               configure this repo to use identity NAME
+  git ident show               show this repo's identity (read-only)
+  git ident list               list known identities
+  git ident add [NAME]         create (or update) an identity, prompting for values
+  git ident remove NAME        delete an identity
+  git ident revert             unset the repo-local settings, back to your globals
+  git ident clone [NAME] URL   clone with NAME's ssh key (picker if NAME omitted), then apply it
+
+Pass -y before the subcommand to skip confirmation prompts.
+Identities live in ${XDG_CONFIG_HOME:-~/.config}/git-ident/identities/
+EOF
+}
+
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/git-ident"
+IDENT_DIR="$CONFIG_DIR/identities"
+
+die() { printf 'git-ident: %s\n' "$*" >&2; exit 1; }
+
+# ---------------------------------------------------------------- identities
+
+list_idents() {
+    [ -d "$IDENT_DIR" ] || return 0
+    local f
+    for f in "$IDENT_DIR"/*; do
+        [ -f "$f" ] || continue
+        basename "$f"
+    done
+}
+
+ident_file() { printf '%s/%s' "$IDENT_DIR" "$1"; }
+
+ident_exists() { [ -f "$(ident_file "$1")" ]; }
+
+# loads IDENT_NAME / IDENT_EMAIL / IDENT_SSH_KEY for identity $1
+load_ident() {
+    local file
+    file=$(ident_file "$1")
+    [ -r "$file" ] || die "unknown identity: $1 (try \`git ident list\`)"
+    IDENT_NAME=; IDENT_EMAIL=; IDENT_SSH_KEY=
+    # shellcheck source=/dev/null
+    . "$file"
+    [ -n "$IDENT_NAME" ] && [ -n "$IDENT_EMAIL" ] && [ -n "$IDENT_SSH_KEY" ] \
+        || die "identity $1 is incomplete; re-run \`git ident add $1\`"
+}
+
+save_ident() {
+    local slug=$1
+    mkdir -p "$IDENT_DIR"
+    umask 077
+    cat >"$(ident_file "$slug")" <<EOF
+# git-ident identity: $slug
+IDENT_NAME=$(printf '%q' "$IDENT_NAME")
+IDENT_EMAIL=$(printf '%q' "$IDENT_EMAIL")
+IDENT_SSH_KEY=$(printf '%q' "$IDENT_SSH_KEY")
+EOF
+    printf 'Saved identity %s to %s\n' "$slug" "$(ident_file "$slug")" >&2
+}
+
+expand_tilde() {
+    case "$1" in
+        "~/"*) printf '%s/%s' "$HOME" "${1#\~/}" ;;
+        *) printf '%s' "$1" ;;
+    esac
+}
+
+# best-effort: pull a key path out of the global core.sshCommand
+global_ssh_key() {
+    local cmd key=
+    cmd=$(git config --global core.sshCommand || true)
+    if [ -n "$cmd" ]; then
+        # shellcheck disable=SC2086
+        set -- $cmd
+        while [ "$#" -gt 0 ]; do
+            if [ "$1" = "-i" ] && [ -n "${2:-}" ]; then key=$2; break; fi
+            shift
+        done
+    fi
+    printf '%s' "$key"
+}
+
+add_ident() {
+    [ -t 0 ] || die "\`git ident add\` needs a terminal"
+    local slug=${1:-}
+    if [ -z "$slug" ]; then
+        read -r -p "Identity name (e.g. personal, work): " slug
+        [ -n "$slug" ] || die "identity name must not be empty"
+    fi
+    case "$slug" in
+        */*|.|..) die "invalid identity name: $slug" ;;
+    esac
+    is_reserved "$slug" && die "'$slug' is a reserved subcommand name"
+
+    IDENT_NAME=; IDENT_EMAIL=; IDENT_SSH_KEY=
+    ident_exists "$slug" && load_ident "$slug"
+
+    # fall back to the user's existing git globals so plain <enter> keeps them
+    local def_name def_email def_key name email key
+    def_name=${IDENT_NAME:-$(git config --global user.name || true)}
+    def_email=${IDENT_EMAIL:-$(git config --global user.email || true)}
+    def_key=${IDENT_SSH_KEY:-$(global_ssh_key)}
+    def_key=${def_key:-$HOME/.ssh/id_ed25519}
+
+    read -r -p "user.name [$def_name]: " name
+    read -r -p "user.email [$def_email]: " email
+    read -r -p "ssh key path [$def_key]: " key
+
+    IDENT_NAME=${name:-$def_name}
+    IDENT_EMAIL=${email:-$def_email}
+    IDENT_SSH_KEY=$(expand_tilde "${key:-$def_key}")
+
+    [ -n "$IDENT_NAME" ] || die "user.name must not be empty"
+    [ -n "$IDENT_EMAIL" ] || die "user.email must not be empty"
+    [ -e "$IDENT_SSH_KEY" ] || printf 'warning: %s does not exist\n' "$IDENT_SSH_KEY" >&2
+
+    save_ident "$slug"
+    CHOSEN_IDENT=$slug
+}
+
+remove_ident() {
+    local slug=${1:-}
+    [ -n "$slug" ] || die "usage: git ident remove NAME"
+    ident_exists "$slug" || die "unknown identity: $slug"
+    confirm "Delete identity $slug?"
+    rm -f "$(ident_file "$slug")"
+    printf 'Deleted identity %s\n' "$slug"
+}
+
+show_list() {
+    local any=0 slug
+    while read -r slug; do
+        [ -n "$slug" ] || continue
+        any=1
+        load_ident "$slug"
+        printf '%-12s %s <%s>  %s\n' "$slug" "$IDENT_NAME" "$IDENT_EMAIL" "$IDENT_SSH_KEY"
+    done < <(list_idents)
+    [ "$any" = 1 ] || printf 'no identities yet (run `git ident add`)\n'
+}
+
+# ---------------------------------------------------------------------- repo
+
+confirm() {
+    local prompt=$1
+    if [ "${ASSUME_YES:-0}" = 1 ]; then return 0; fi
+    [ -t 0 ] || die "$prompt (refusing without a terminal; pass -y)"
+    local reply
+    read -r -p "$prompt [y/N] " reply
+    case "$reply" in
+        y|Y|yes|YES) return 0 ;;
+        *) printf 'Aborted.\n' >&2; exit 1 ;;
+    esac
+}
+
+# IdentitiesOnly pins the key. Rather than fighting a ~/.ssh/config that enables
+# multiplexing, we give each identity its own ControlPath namespace, so a shared
+# connection is only ever reused by the identity that authenticated it. (%C is a
+# hash of host/port/user/etc, and ~/.ssh always exists, so ssh can bind there.)
+ssh_command() {
+    local slug=$1
+    printf 'ssh -i %q -o IdentitiesOnly=yes -o ControlPath=%q' \
+        "$IDENT_SSH_KEY" "$HOME/.ssh/cm-git-ident-$slug-%C.sock"
+}
+
+repo_root() {
+    git -C "${1:-.}" rev-parse --show-toplevel 2>/dev/null \
+        || die "not inside a git repository"
+}
+
+apply_ident() {
+    local slug=$1 dir=${2:-.} root
+    load_ident "$slug"
+    root=$(repo_root "$dir")
+    confirm "Set $root to identity $slug?"
+    git -C "$dir" config user.name "$IDENT_NAME"
+    git -C "$dir" config user.email "$IDENT_EMAIL"
+    git -C "$dir" config core.sshCommand "$(ssh_command "$slug")"
+    printf 'Configured %s as %s\n' "$root" "$slug"
+}
+
+revert_repo() {
+    local dir=${1:-.} root k
+    root=$(repo_root "$dir")
+    confirm "Unset repo-local user.name/user.email/core.sshCommand in $root?"
+    for k in user.name user.email core.sshCommand; do
+        git -C "$dir" config --unset-all "$k" || true
+    done
+    printf 'Reverted %s to your global git settings\n' "$root"
+}
+
+# echoes the identity matching the repo's current settings, if any
+match_ident() {
+    local dir=${1:-.} name email sshcmd slug
+    name=$(git -C "$dir" config user.name || true)
+    email=$(git -C "$dir" config user.email || true)
+    sshcmd=$(git -C "$dir" config core.sshCommand || true)
+    while read -r slug; do
+        [ -n "$slug" ] || continue
+        load_ident "$slug"
+        if [ "$name" = "$IDENT_NAME" ] && [ "$email" = "$IDENT_EMAIL" ] \
+           && [ "$sshcmd" = "$(ssh_command "$slug")" ]; then
+            printf '%s' "$slug"
+            return 0
+        fi
+    done < <(list_idents)
+    return 1
+}
+
+show_repo() {
+    local dir=${1:-.} offer=${2:-0} match=""
+    local name email sshcmd
+    repo_root "$dir" >/dev/null
+    name=$(git -C "$dir" config user.name || true)
+    email=$(git -C "$dir" config user.email || true)
+    sshcmd=$(git -C "$dir" config core.sshCommand || true)
+    match=$(match_ident "$dir" || true)
+
+    local bold="" dim="" green="" red="" reset=""
+    if [ -t 1 ]; then
+        bold=$'\033[1m'; dim=$'\033[2m'; green=$'\033[32m'; red=$'\033[31m'; reset=$'\033[0m'
+    fi
+
+    if [ -n "$match" ]; then
+        printf '%s%s%s%s\n' "$bold" "$green" "$(printf '%s' "$match" | tr '[:lower:]' '[:upper:]')" "$reset"
+        offer=0
+    else
+        printf '%s%sNO IDENTITY%s\n' "$bold" "$red" "$reset"
+    fi
+
+    printf '%s' "$dim"
+    printf '  repo:       %s\n' "$(repo_root "$dir")"
+    printf '  user.name:  %s (%s)\n' "${name:-<unset>}" "$(git -C "$dir" config --local user.name >/dev/null 2>&1 && echo local || echo inherited)"
+    printf '  user.email: %s (%s)\n' "${email:-<unset>}" "$(git -C "$dir" config --local user.email >/dev/null 2>&1 && echo local || echo inherited)"
+    printf '  sshCommand: %s\n' "${sshcmd:-<unset>}"
+    printf '%s' "$reset"
+
+    if [ "$offer" = 1 ] && [ -t 0 ]; then
+        printf '\n'
+        pick_and_apply "$dir"
+    fi
+}
+
+# prints a chosen identity slug on stdout (prompts on stderr)
+pick_ident() {
+    local slugs=() reply choice
+    while read -r slug; do
+        [ -n "$slug" ] && slugs+=("$slug")
+    done < <(list_idents)
+
+    if [ "${#slugs[@]}" -eq 0 ]; then
+        printf 'No identities configured yet.\n' >&2
+        read -r -p "Create one now? [y/N] " reply
+        case "$reply" in y|Y|yes|YES) ;; *) exit 0 ;; esac
+        add_ident ""
+        printf '%s' "$CHOSEN_IDENT"
+        return
+    fi
+
+    if [ "${#slugs[@]}" -eq 1 ]; then
+        printf '%s' "${slugs[0]}"
+        return
+    fi
+
+    command -v fzf >/dev/null 2>&1 || die "fzf is required to pick an identity (or name one explicitly)"
+    choice=$(
+        for slug in "${slugs[@]}"; do
+            load_ident "$slug"
+            printf '%-12s %s <%s>\n' "$slug" "$IDENT_NAME" "$IDENT_EMAIL"
+        done | fzf --height=~40% --prompt='identity> ' --with-nth=1.. || true
+    )
+    [ -n "$choice" ] || { printf 'Skipped.\n' >&2; exit 0; }
+    printf '%s' "${choice%% *}"
+}
+
+pick_and_apply() {
+    local dir=${1:-.} slug
+    [ -t 0 ] || exit 0
+    slug=$(pick_ident)
+    apply_ident "$slug" "$dir"
+}
+
+# guess where `git clone "$@"` will put the repo
+clone_dest() {
+    local pos=() a
+    while [ "$#" -gt 0 ]; do
+        a=$1
+        case "$a" in
+            --) shift; while [ "$#" -gt 0 ]; do pos+=("$1"); shift; done; break ;;
+            # options that take a separate value
+            -b|-o|-u|-c|-j|--branch|--origin|--upload-pack|--config|--jobs|\
+            --depth|--shallow-since|--shallow-exclude|--reference|--reference-if-able|\
+            --template|--separate-git-dir|--filter|--server-option|--bundle-uri|--revision)
+                shift ;;
+            -*) ;;
+            *) pos+=("$a") ;;
+        esac
+        shift
+    done
+
+    if [ "${#pos[@]}" -ge 2 ]; then
+        printf '%s' "${pos[1]}"
+        return
+    fi
+    [ "${#pos[@]}" -ge 1 ] || return 1
+    # mimic git: strip trailing slashes, /.git, and a .git suffix
+    local url=${pos[0]}
+    url=${url%/}
+    url=${url%/.git}
+    url=${url%/}
+    url=${url##*/}
+    url=${url%.git}
+    url=${url%:}
+    [ -n "$url" ] || return 1
+    printf '%s' "$url"
+}
+
+clone_repo() {
+    local slug=
+    [ "$#" -gt 0 ] || die "usage: git ident clone [NAME] <url> [git-clone args...]"
+    if ident_exists "${1:-}"; then
+        slug=$1
+        shift
+    else
+        [ -t 0 ] || die "usage: git ident clone NAME <url> [git-clone args...]"
+        slug=$(pick_ident)
+    fi
+    [ "$#" -gt 0 ] || die "usage: git ident clone [NAME] <url> [git-clone args...]"
+    load_ident "$slug"
+
+    local target
+    target=$(clone_dest "$@") || die "could not determine clone destination"
+    GIT_SSH_COMMAND="$(ssh_command "$slug")" git clone "$@"
+    [ -d "$target" ] || die "could not find cloned repo at $target"
+    ASSUME_YES=1 apply_ident "$slug" "$target"
+}
+
+# ---------------------------------------------------------------------- main
+
+is_reserved() {
+    case "$1" in
+        show|list|add|remove|revert|clone|help|-h|--help|-y|--yes) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+case "${1:-}" in -h|--help|help) usage; exit 0 ;; esac
+
+ASSUME_YES=0
+if [ "${1:-}" = "-y" ] || [ "${1:-}" = "--yes" ]; then ASSUME_YES=1; shift; fi
+
+cmd=${1:-}
+case "$cmd" in
+    "")        show_repo . 1 ;;
+    show)      show_repo . ;;
+    list)      show_list ;;
+    add)       add_ident "${2:-}" ;;
+    remove)    remove_ident "${2:-}" ;;
+    revert)    revert_repo . ;;
+    clone)     shift; clone_repo "$@" ;;
+    -h|--help|help) usage ;;
+    -*)        die "unknown option: $cmd (try --help)" ;;
+    *)         apply_ident "$cmd" . ;;
+esac
