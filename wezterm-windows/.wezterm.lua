@@ -110,6 +110,27 @@ for _, key_binding in ipairs {
   table.insert(config.keys, key_binding)
 end
 
+-- Hyperlink rules: like the defaults, but never let a URL end in trailing
+-- punctuation (especially `)`, which usually belongs to surrounding markdown or
+-- prose rather than the link itself).
+config.hyperlink_rules = {
+  -- Bare email addresses
+  {
+    regex = [[\b\w+([.+-]\w+)*@[\w-]+(\.[\w-]+)+\b]],
+    format = 'mailto:$0',
+  },
+  -- mailto:/news: style links
+  {
+    regex = [[\b(mailto|news):[^\s<>"']+]],
+    format = '$0',
+  },
+  -- scheme://... links; the last character may not be punctuation
+  {
+    regex = [==[\b\w+://[^\s<>"'`]*[^\s<>"'`.,;:!?)\]}]]==],
+    format = '$0',
+  },
+}
+
 -- Add mouse bindings to disable plain-click link opening and enable Ctrl-click
 -- instead
 config.mouse_bindings = {
