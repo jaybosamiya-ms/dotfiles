@@ -260,10 +260,12 @@ BWRAP_ARGS=(
 
 if [[ "${1:-}" == -h || "${1:-}" == --help ]]; then
     cat >&2 <<EOF
-Usage: $PROG [-h|--help] [--run CMD [ARGS...]]
+Usage: $PROG [-h|--help] [SELECTION] [--run CMD [ARGS...]]
 
+  SELECTION             One of: shell, claude, pi, opencode.
+                        Launches that target directly (skips the fzf picker).
   --run CMD [ARGS...]   Run CMD inside the sandbox (non-interactive).
-                        Without --run, launches an fzf picker.
+                        With no arguments, launches an fzf picker.
 EOF
     exit 0
 fi
@@ -274,7 +276,18 @@ if [[ "${1:-}" == --run ]]; then
     exec /usr/bin/bwrap "${BWRAP_ARGS[@]}" /usr/bin/zsh -l -c "$*"
 fi
 
-CHOICE=$(printf 'shell\nclaude\npi\nopencode\n' | fzf --prompt="$PROG> " --no-sort --reverse --height=8 --border) || exit 1
+case "${1:-}" in
+    shell|claude|pi|opencode)
+        CHOICE=$1
+        ;;
+    "")
+        CHOICE=$(printf 'shell\nclaude\npi\nopencode\n' | fzf --prompt="$PROG> " --no-sort --reverse --height=8 --border) || exit 1
+        ;;
+    *)
+        echo "$PROG: unknown argument: $1" >&2
+        exit 1
+        ;;
+esac
 
 case "$CHOICE" in
     shell)    exec /usr/bin/bwrap "${BWRAP_ARGS[@]}" /usr/bin/zsh -l ;;
