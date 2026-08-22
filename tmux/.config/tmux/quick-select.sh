@@ -150,10 +150,16 @@ END {
       len = RLENGTH
       pos = st + (len > 0 ? len : 1)
       txt = substr(s, st, len)
+      # Char just past the raw match, checked before trailing punctuation is
+      # trimmed off (after trimming it would only ever be that punctuation).
+      next_ch = substr(s, st + len, 1)
       while (len > 1 && substr(txt, len, 1) ~ /[.,:;")'"'"']/) { len--; txt = substr(txt, 1, len) }
       prev = (st > 1) ? substr(s, st - 1, 1) : " "
-      # A match starting right after a word character is a fragment, not a token.
-      if (len >= 2 && prev !~ /[A-Za-z0-9_]/) {
+      # A match butting up against a word character on either side is a
+      # fragment, not a token: e.g. the domain rule caps the last component at
+      # 8 chars, so wezterm.action.SendString would otherwise be offered as
+      # wezterm.action.SendStri.
+      if (len >= 2 && prev !~ /[A-Za-z0-9_]/ && next_ch !~ /[A-Za-z0-9_]/) {
         n++; mline[n] = j; mpos[n] = st; mlen[n] = len; mtxt[n] = txt
       }
     }
