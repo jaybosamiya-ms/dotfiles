@@ -28,7 +28,6 @@ QS_RE=$QS_RE'|(~|\.{1,2})?[A-Za-z0-9._@%+-]*(/[A-Za-z0-9._@%+:#-]+)+/?'
 QS_RE=$QS_RE'|[0-9]{1,3}(\.[0-9]{1,3}){3}(:[0-9]{1,5})?'
 QS_RE=$QS_RE'|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
 QS_RE=$QS_RE'|[0-9a-f]{7,40}'
-QS_RE=$QS_RE'|[A-Za-z0-9._-]+\.[A-Za-z][A-Za-z0-9]{0,7}'
 export QS_RE
 
 # ---------------------------------------------------------------- launcher ---
@@ -156,9 +155,8 @@ END {
       while (len > 1 && substr(txt, len, 1) ~ /[.,:;")'"'"']/) { len--; txt = substr(txt, 1, len) }
       prev = (st > 1) ? substr(s, st - 1, 1) : " "
       # A match butting up against a word character on either side is a
-      # fragment, not a token: e.g. the domain rule caps the last component at
-      # 8 chars, so wezterm.action.SendString would otherwise be offered as
-      # wezterm.action.SendStri.
+      # fragment, not a token: e.g. a capped rule like the git-hash one would
+      # otherwise offer the first 40 chars of a longer hex-looking word.
       if (len >= 2 && prev !~ /[A-Za-z0-9_]/ && next_ch !~ /[A-Za-z0-9_]/) {
         n++; mline[n] = j; mpos[n] = st; mlen[n] = len; mtxt[n] = txt
       }
