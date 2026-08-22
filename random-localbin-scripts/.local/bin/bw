@@ -258,12 +258,38 @@ BWRAP_ARGS=(
     --setenv OUT_DIR /tmp
 )
 
+# ---------------------------------------------------------------------------
+# --mount-readonly PATH: extra read-only bind mounts (repeatable)
+# ---------------------------------------------------------------------------
+while [[ "${1:-}" == --mount-readonly || "${1:-}" == --mount-readonly=* ]]; do
+    if [[ "$1" == --mount-readonly=* ]]; then
+        MOUNT_PATH=${1#--mount-readonly=}
+        shift
+    else
+        if [[ $# -lt 2 ]]; then
+            echo "$PROG: --mount-readonly requires a PATH argument" >&2
+            exit 1
+        fi
+        MOUNT_PATH=$2
+        shift 2
+    fi
+    if [[ ! -e "$MOUNT_PATH" ]]; then
+        echo "$PROG: --mount-readonly: $MOUNT_PATH does not exist" >&2
+        exit 1
+    fi
+    MOUNT_REAL=$(realpath "$MOUNT_PATH")
+    BWRAP_ARGS+=(--ro-bind "$MOUNT_REAL" "$MOUNT_REAL")
+done
+
 if [[ "${1:-}" == -h || "${1:-}" == --help ]]; then
     cat >&2 <<EOF
-Usage: $PROG [-h|--help] [SELECTION] [--run CMD [ARGS...]]
+Usage: $PROG [-h|--help] [--mount-readonly PATH]... [SELECTION] [--run CMD [ARGS...]]
 
   SELECTION             One of: shell, claude, pi, opencode.
                         Launches that target directly (skips the fzf picker).
+  --mount-readonly PATH Additionally bind PATH read-only at its real path
+                        inside the sandbox. May be given multiple times.
+                        Must come before SELECTION/--run.
   --run CMD [ARGS...]   Run CMD inside the sandbox (non-interactive).
                         With no arguments, launches an fzf picker.
 EOF
