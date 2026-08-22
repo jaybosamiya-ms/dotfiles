@@ -100,6 +100,8 @@ table.insert(config.keys, {
 for _, key_binding in ipairs {
   { key = 'c', mods = 'CTRL|SHIFT', action = wezterm.action.SendString '\x1ay' },
   { key = 't', mods = 'CTRL|SHIFT', action = wezterm.action.SendString '\x1at' },
+  { key = 'Space', mods = 'CTRL|SHIFT', action = wezterm.action.SendString '\x1a ' },
+  { key = 'Space', mods = 'CTRL|ALT|SHIFT', action = wezterm.action.QuickSelect },
   { key = 'Tab', mods = 'CTRL', action = wezterm.action.SendString '\x1a]' },
   { key = 'Tab', mods = 'CTRL|SHIFT', action = wezterm.action.SendString '\x1a[' },
   { key = 'PageUp', mods = 'CTRL', action = wezterm.action.SendString '\x1a[' },
