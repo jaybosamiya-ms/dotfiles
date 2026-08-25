@@ -108,6 +108,12 @@ for _, key_binding in ipairs {
   { key = 'PageDown', mods = 'CTRL', action = wezterm.action.SendString '\x1a]' },
   { key = 'PageUp', mods = 'CTRL|SHIFT', action = wezterm.action.SendString '\x1a{' },
   { key = 'PageDown', mods = 'CTRL|SHIFT', action = wezterm.action.SendString '\x1a}' },
+  -- Ctrl+Alt+Shift+arrows: send the xterm extended-key sequences tmux expects
+  -- for splitting (Windows would otherwise swallow Ctrl+Alt as AltGr).
+  { key = 'UpArrow', mods = 'CTRL|ALT|SHIFT', action = wezterm.action.SendString '\x1b[1;8A' },
+  { key = 'DownArrow', mods = 'CTRL|ALT|SHIFT', action = wezterm.action.SendString '\x1b[1;8B' },
+  { key = 'RightArrow', mods = 'CTRL|ALT|SHIFT', action = wezterm.action.SendString '\x1b[1;8C' },
+  { key = 'LeftArrow', mods = 'CTRL|ALT|SHIFT', action = wezterm.action.SendString '\x1b[1;8D' },
 } do
   table.insert(config.keys, key_binding)
 end
