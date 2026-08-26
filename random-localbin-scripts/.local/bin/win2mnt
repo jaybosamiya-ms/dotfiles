@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+# win2mnt - convert between Windows and WSL paths
+
+set -u
+
+mode=auto
+distro=${WSL_DISTRO_NAME:-Ubuntu}
+
+usage() {
+    cat <<'EOF'
+win2mnt - convert between Windows and WSL paths
+
+Usage: win2mnt [-w|-u] [-d DISTRO] [PATH...]
+
+With no flags it DWIMs per path: Windows-looking input becomes a WSL path,
+WSL-looking input becomes a Windows path.
+
+  win2mnt 'C:\Users\jayb\dither-viz.py'         -> /mnt/c/Users/jayb/dither-viz.py
+  win2mnt '\\wsl.localhost\Ubuntu\home\jayb\x'  -> /home/jayb/x
+  win2mnt /mnt/c/Users/jayb                     -> C:\Users\jayb
+  win2mnt /home/jayb                            -> \\wsl.localhost\Ubuntu\home\jayb
+
+Flags:
+  -w, --to-windows   force conversion to a Windows path (alias: -r, --reverse)
+  -u, --to-wsl       force conversion to a WSL/Linux path (alias: -f, --forward)
+  -d, --distro NAME  distro used in \\wsl.localhost\NAME\... (default: $WSL_DISTRO_NAME)
+  -h, --help         show this help
+
+Paths may be given as arguments; with none, lines are read from stdin.
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -r|--reverse|-w|--to-windows) mode=win; shift ;;
+        -u|--to-wsl|-f|--forward)     mode=wsl; shift ;;
+        -d|--distro)  distro=$2; shift 2 ;;
+        -h|--help)    usage; exit 0 ;;
+        --)           shift; break ;;
+        *)            break ;;
+    esac
+done
+
+to_wsl() {
+    local p=$1
+    # \\wsl.localhost\<distro>\... or \\wsl$\<distro>\...
+    if [[ $p == \\\\wsl.localhost\\* || $p == \\\\wsl\$\\* || $p == \\wsl.localhost\\* || $p == \\wsl\$\\* ]]; then
+        local stripped=${p#\\}                # tolerate one or two leading slashes
+        stripped=${stripped#\\}
+        stripped=${stripped#wsl.localhost}
+        stripped=${stripped#wsl\$}
+        stripped=${stripped#\\}               # drop separator
+        stripped=${stripped#*\\}              # drop distro name; rest starts at path
+        echo -E "/${stripped//\\//}"
+    elif [[ $p =~ ^([A-Za-z]):[\\/](.*)$ ]]; then
+        local drive=${BASH_REMATCH[1]} rest=${BASH_REMATCH[2]}
+        drive=${drive,,}
+        echo -E "/mnt/$drive/${rest//\\//}"
+    elif [[ $p =~ ^([A-Za-z]):$ ]]; then
+        local drive=${BASH_REMATCH[1]}
+        echo -E "/mnt/${drive,,}"
+    else
+        echo -E "${p//\\//}"
+    fi
+}
+
+to_win() {
+    local p=$1
+    if [[ $p =~ ^/mnt/([A-Za-z])(/(.*))?$ ]]; then
+        local drive=${BASH_REMATCH[1]} rest=${BASH_REMATCH[3]}
+        echo -E "${drive^}:\\${rest//\//\\}"
+    elif [[ $p == /* ]]; then
+        echo -E "\\\\wsl.localhost\\${distro}${p//\//\\}"
+    else
+        echo -E "${p//\//\\}"
+    fi
+}
+
+looks_windows() {
+    local p=$1
+    [[ $p =~ ^[A-Za-z]:([\\/].*)?$ ]] && return 0   # C:  C:\...  C:/...
+    [[ $p == \\* ]] && return 0                     # \\wsl.localhost\... or \...
+    [[ $p == *\\* ]] && return 0                    # any backslash at all
+    return 1
+}
+
+convert() {
+    case $mode in
+        win) to_win "$1" ;;
+        wsl) to_wsl "$1" ;;
+        *)   if looks_windows "$1"; then to_wsl "$1"; else to_win "$1"; fi ;;
+    esac
+}
+
+if [[ $# -gt 0 ]]; then
+    for arg in "$@"; do convert "$arg"; done
+else
+    while IFS= read -r line; do
+        [[ -z $line ]] && { echo; continue; }
+        convert "$line"
+    done
+fi
