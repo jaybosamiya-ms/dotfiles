@@ -26,6 +26,10 @@ Flags:
   -d, --distro NAME  distro used in \\wsl.localhost\NAME\... (default: $WSL_DISTRO_NAME)
   -h, --help         show this help
 
+Quote Windows paths, or the shell eats the backslashes. If it does, win2mnt
+tries to recover the path by matching it against the real filesystem, and
+errors out when the result is missing or ambiguous.
+
 Paths may be given as arguments; with none, lines are read from stdin.
 EOF
 }
@@ -76,6 +80,54 @@ to_win() {
     fi
 }
 
+# ---- recovery for shell-eaten backslashes -----------------------------------
+# 'C:UsersjaybAppDataRoamingdither-viz.py' -> /mnt/c/Users/jayb/AppData/Roaming/dither-viz.py
+# Resolved against the real filesystem; ambiguous or non-existent -> error.
+_matches=()
+
+_walk() {
+    local dir=$1 rest=$2 entry name n
+    if [[ -z $rest ]]; then
+        _matches+=("$dir")
+        return
+    fi
+    shopt -s nullglob dotglob nocasematch
+    for entry in "$dir"/*; do
+        name=${entry##*/}
+        n=${#name}
+        [[ ${rest:0:n} == "$name" ]] || continue
+        if [[ -d $entry ]]; then
+            _walk "$entry" "${rest:n}"
+        elif [[ ${rest:n} == "" ]]; then
+            _matches+=("$entry")
+        fi
+    done
+    shopt -u nocasematch
+}
+
+looks_mangled() {
+    # drive letter followed by a non-empty remainder containing no separator
+    [[ $1 =~ ^[A-Za-z]:[^\\/]+$ ]]
+}
+
+unmangle() {
+    local p=$1 drive=${1:0:1} rest=${1:2} root
+    drive=${drive,,}
+    root=/mnt/$drive
+    if [[ ! -d $root ]]; then
+        echo "win2mnt: $p: no such drive mounted at $root (try quoting: win2mnt 'C:\\Users\\...')" >&2
+        return 1
+    fi
+    _matches=()
+    _walk "$root" "$rest"
+    case ${#_matches[@]} in
+        0) echo "win2mnt: $p: cannot recover path (missing separators, no match under $root); quote the argument to keep backslashes: win2mnt 'C:\\Users\\...'" >&2; return 1 ;;
+        1) echo -E "${_matches[0]}" ;;
+        *) { echo "win2mnt: $p: ambiguous recovery (quote the argument to keep backslashes: win2mnt 'C:\\Users\\...'); candidates:"
+             printf '  %s\n' "${_matches[@]}"; } >&2; return 1 ;;
+    esac
+}
+
 looks_windows() {
     local p=$1
     [[ $p =~ ^[A-Za-z]:([\\/].*)?$ ]] && return 0   # C:  C:\...  C:/...
@@ -85,12 +137,20 @@ looks_windows() {
 }
 
 convert() {
+    local resolved
+    if looks_mangled "$1"; then
+        resolved=$(unmangle "$1") || { status=1; return 1; }
+        if [[ $mode == win ]]; then to_win "$resolved"; else echo -E "$resolved"; fi
+        return 0
+    fi
     case $mode in
         win) to_win "$1" ;;
         wsl) to_wsl "$1" ;;
         *)   if looks_windows "$1"; then to_wsl "$1"; else to_win "$1"; fi ;;
     esac
 }
+
+status=0
 
 if [[ $# -gt 0 ]]; then
     for arg in "$@"; do convert "$arg"; done
@@ -100,3 +160,5 @@ else
         convert "$line"
     done
 fi
+
+exit $status
