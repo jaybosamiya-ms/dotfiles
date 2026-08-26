@@ -1039,6 +1039,7 @@ between `All locations` and `Errors only`."
 ;; change ID and so has the staleness bug above; dgutov/diff-hl#293 switches it
 ;; to the commit ID. Delete this block once that lands and Doom's pin has it.
 (after! diff-hl
+  (require 'hydra)
   (defun +jj-resolve-parent-revision ()
     "Resolve @- to a concrete commit ID in the current jj repo."
     (when-let* ((root (vc-jj-root buffer-file-name))
@@ -1055,8 +1056,10 @@ between `All locations` and `Errors only`."
                (eq (vc-backend buffer-file-name) 'JJ))
       (setq-local diff-hl-reference-revision
                   (+jj-resolve-parent-revision))))
-  (map! "C-c [" #'diff-hl-previous-hunk
-        "C-c ]" #'diff-hl-next-hunk))
+  (defhydra hydra-diff-hl (global-map "C-c")
+    "Hunks"
+    ("[" diff-hl-previous-hunk "Previous hunk")
+    ("]" diff-hl-next-hunk "Next hunk")))
 
 ;; Scrypage config
 (use-package! scrypage-mode
