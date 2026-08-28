@@ -69,6 +69,25 @@ config.scrollback_lines = 10000000
 -- }
 config.keys = {}
 
+wezterm.on('toggle-title-bar', function(window, _pane)
+  local overrides = window:get_config_overrides() or {}
+
+  if overrides.window_decorations then
+    overrides.window_decorations = nil
+  else
+    overrides.window_decorations = 'TITLE | RESIZE'
+  end
+
+  window:set_config_overrides(overrides)
+end)
+
+table.insert(config.keys, {
+  key = 'F10',
+  mods = 'NONE',
+  label = 'Toggle title bar',
+  action = wezterm.action.EmitEvent 'toggle-title-bar',
+})
+
 table.insert(config.keys, {
   key = 'Enter',
   mods = 'ALT',
