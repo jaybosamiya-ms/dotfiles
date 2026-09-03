@@ -118,8 +118,14 @@ fi
 # Relevant: `apt install wslu`
 #
 # Also, `wslview -r` is useful to set up browser stuff
-if command -v wslview >/dev/null; then
-    alias open=wslview
+if (( ${+commands[wslview]} )); then
+    _wslview_path="${commands[wslview]}"
+    function open {
+        local file
+        for file in "$@"; do
+            "$_wslview_path" "$file"
+        done
+    }
 fi
 
 # Get completions for jujutsu if available
