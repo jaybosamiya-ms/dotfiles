@@ -615,6 +615,28 @@ if test -n "$WT_SESSION"; then
     precmd_functions+=(__keep_current_path)
 fi
 
+# Set the terminal title to the directory shown by the current shell prompt.
+# precmd runs immediately before each prompt is displayed, including after `cd`.
+__set_terminal_title() {
+    local directory=$PWD
+    local link=/tmp/tempdir
+    local physical=${PWD:A}
+    local target=${link:A}
+
+    if [[ $physical == "$target" ]]; then
+        directory='[tempdir]'
+    elif [[ $physical == "$target"/* ]]; then
+        local rest=${physical#$target/}
+        directory="[tempdir] $rest"
+    elif [[ $PWD == $HOME(|/*) ]]; then
+        directory=${PWD:t}
+        [[ -n $directory ]] || directory='~'
+    fi
+
+    printf '\033]2;%s\007' "$directory"
+}
+precmd_functions+=(__set_terminal_title)
+
 # connect up to cargo
 if [ -f ~/.cargo/env ]; then
     . "$HOME/.cargo/env"
