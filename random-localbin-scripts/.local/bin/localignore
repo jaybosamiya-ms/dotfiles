@@ -5,6 +5,9 @@ dir="$(pwd)"
 while true; do
     if [[ -f "$dir/.git/info/exclude" ]]; then
         exec vim "$dir/.git/info/exclude"
+    elif [[ -f "$dir/.git" ]]; then
+        common_dir="$(git -C "$dir" rev-parse --path-format=absolute --git-common-dir)"
+        exec vim "$common_dir/info/exclude"
     elif [[ -f "$dir/.jj/repo/store/git/info/exclude" ]]; then
         exec vim "$dir/.jj/repo/store/git/info/exclude"
     fi
