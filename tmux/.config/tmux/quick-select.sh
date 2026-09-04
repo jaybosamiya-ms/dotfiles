@@ -25,6 +25,8 @@ QS_RE='(https?|ftp|file|ssh|git)://[^][:space:]"'"'"'`<>|(){}]+'
 QS_RE=$QS_RE'|[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+:[^[:space:]"'"'"'`<>|(){}]+'
 QS_RE=$QS_RE'|[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}'
 QS_RE=$QS_RE'|(~|\.{1,2})?[A-Za-z0-9._@%+-]*(/[A-Za-z0-9._@%+:#-]+)+/?'
+# Rust item paths
+QS_RE=$QS_RE'|[A-Za-z_][A-Za-z0-9_]*(::[A-Za-z_][A-Za-z0-9_]*)+'
 QS_RE=$QS_RE'|[0-9]{1,3}(\.[0-9]{1,3}){3}(:[0-9]{1,5})?'
 QS_RE=$QS_RE'|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
 # jujutsu change IDs are reverse-hex digits (k-z only), so they never collide
