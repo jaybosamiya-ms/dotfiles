@@ -113,6 +113,37 @@ ffm = [
   "--to", "latest(ancestors(@) & (merges() | ~empty()))"
 ]
 
+# Make it easy to get ignored files, similar to `git clean -ndX .`
+ignored = ["util", "exec", "--", "bash", "-c", """
+set -euo pipefail
+cd "$JJ_WORKSPACE_ROOT"
+
+python3 - <<'PY'
+import subprocess
+
+tracked = set(subprocess.check_output(["jj", "file", "list", "--quiet"], text=True).splitlines())
+
+files = subprocess.check_output(["fd", "--hidden", "--no-ignore", "--type", "f", "--exclude", ".jj", "."], text=True).splitlines()
+
+untracked = sorted(p.removeprefix("./") for p in files if p.removeprefix("./") not in tracked)
+
+collapsed_dirs = set()
+
+for path in untracked:
+  parts = path.split("/")
+  for i in range(1, len(parts)):
+    directory = "/".join(parts[:i])
+    if not any(p.startswith(directory + "/") for p in tracked):
+      collapsed_dirs.add(directory)
+      break
+
+result = set(collapsed_dirs)
+result.update(path for path in untracked if not any(path.startswith(directory + "/") for directory in collapsed_dirs))
+
+print(*sorted(result), sep=chr(10))
+PY
+""", ""]
+
 # Small convenience script to feed the changes for this branch to an LLM and get
 # a review of it.
 llmr = ["util", "exec", "--", "bash", "-c", """
