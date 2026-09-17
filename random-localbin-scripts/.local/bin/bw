@@ -20,28 +20,28 @@ fi
 # ---------------------------------------------------------------------------
 # Resolve claude binary once at script time
 # ---------------------------------------------------------------------------
-if [[ ! -e "$REAL_HOME/.local/bin/claude" ]]; then
-    echo "$PROG: $REAL_HOME/.local/bin/claude does not exist" >&2
-    exit 1
+CLAUDE_BIND_ARGS=()
+if [[ -e "$REAL_HOME/.local/bin/claude" ]]; then
+    CLAUDE_REAL=$(readlink -f "$REAL_HOME/.local/bin/claude")
+    CLAUDE_BIND_ARGS=(--ro-bind "$CLAUDE_REAL" "$CLAUDE_REAL")
 fi
-CLAUDE_REAL=$(readlink -f "$REAL_HOME/.local/bin/claude")
 
 # ---------------------------------------------------------------------------
 # Ensure pi has an existing persistent writable config/session directory
 # ---------------------------------------------------------------------------
-if [[ ! -d "$REAL_HOME/.pi" ]]; then
-    echo "$PROG: $REAL_HOME/.pi not found" >&2
-    exit 1
+PI_BIND_ARGS=()
+if [[ -d "$REAL_HOME/.pi" ]]; then
+    PI_BIND_ARGS=(--bind "$REAL_HOME/.pi" /home/sandbox/.pi)
 fi
 
 # ---------------------------------------------------------------------------
 # Open .claude.json on fd 3 before we enter the sandbox
 # ---------------------------------------------------------------------------
-if [[ ! -f "$REAL_HOME/.claude.json" ]]; then
-    echo "$PROG: $REAL_HOME/.claude.json not found" >&2
-    exit 1
+CLAUDE_CONFIG_ARGS=()
+if [[ -f "$REAL_HOME/.claude.json" ]]; then
+    exec 3<"$REAL_HOME/.claude.json"
+    CLAUDE_CONFIG_ARGS=(--file 3 /home/sandbox/.claude.json)
 fi
-exec 3<"$REAL_HOME/.claude.json"
 
 # ---------------------------------------------------------------------------
 # Synthetic /etc/passwd and /etc/group for the sandbox user
@@ -92,7 +92,7 @@ BWRAP_ARGS=(
     --tmpfs /tmp
     --dev   /dev
     --dir   /dev/net
-    --dev-bind /dev/net/tun             /dev/net/tun  # For LiteBox
+    --dev-bind-try /dev/net/tun         /dev/net/tun  # For LiteBox
     --proc  /proc
 
     # --- read-only system directories ---
@@ -104,43 +104,43 @@ BWRAP_ARGS=(
     --ro-bind /usr/lib                  /usr/lib
     --ro-bind-try /usr/sbin             /usr/sbin
     --ro-bind-try /sbin                 /sbin
-    --ro-bind /usr/local/bin            /usr/local/bin
-    --ro-bind /usr/local/lib            /usr/local/lib
-    --ro-bind /usr/libexec              /usr/libexec
-    --ro-bind /usr/include              /usr/include
-    --ro-bind /sys                      /sys
+    --ro-bind-try /usr/local/bin        /usr/local/bin
+    --ro-bind-try /usr/local/lib        /usr/local/lib
+    --ro-bind-try /usr/libexec          /usr/libexec
+    --ro-bind-try /usr/include          /usr/include
+    --ro-bind-try /sys                  /sys
 
     # --- /etc fragments ---
-    --ro-bind /etc/alternatives         /etc/alternatives
-    --ro-bind /etc/resolv.conf          /etc/resolv.conf
-    --ro-bind /etc/profile.d            /etc/profile.d
-    --ro-bind /etc/bash_completion.d    /etc/bash_completion.d
-    --ro-bind /etc/ssl/certs            /etc/ssl/certs
-    --ro-bind /etc/ssl/openssl.cnf      /etc/ssl/openssl.cnf
-    --ro-bind /etc/ld.so.cache          /etc/ld.so.cache
-    --ro-bind /etc/ld.so.conf           /etc/ld.so.conf
-    --ro-bind /etc/ld.so.conf.d         /etc/ld.so.conf.d
-    --ro-bind /etc/localtime            /etc/localtime
-    --ro-bind /etc/nsswitch.conf        /etc/nsswitch.conf
-    --ro-bind /etc/hosts                /etc/hosts
+    --ro-bind-try /etc/alternatives     /etc/alternatives
+    --ro-bind    /etc/resolv.conf       /etc/resolv.conf
+    --ro-bind-try /etc/profile.d        /etc/profile.d
+    --ro-bind-try /etc/bash_completion.d /etc/bash_completion.d
+    --ro-bind-try /etc/ssl/certs       /etc/ssl/certs
+    --ro-bind-try /etc/ssl/openssl.cnf /etc/ssl/openssl.cnf
+    --ro-bind-try /etc/ld.so.cache     /etc/ld.so.cache
+    --ro-bind-try /etc/ld.so.conf      /etc/ld.so.conf
+    --ro-bind-try /etc/ld.so.conf.d    /etc/ld.so.conf.d
+    --ro-bind-try /etc/localtime       /etc/localtime
+    --ro-bind-try /etc/nsswitch.conf   /etc/nsswitch.conf
+    --ro-bind-try /etc/hosts           /etc/hosts
     --file 4                            /etc/passwd
     --file 5                            /etc/group
-    --ro-bind /etc/zsh                  /etc/zsh
-    --ro-bind /etc/os-release           /etc/os-release
-    --ro-bind /etc/apt                  /etc/apt
+    --ro-bind-try /etc/zsh              /etc/zsh
+    --ro-bind-try /etc/os-release       /etc/os-release
+    --ro-bind-try /etc/apt              /etc/apt
 
     # --- /usr/share fragments ---
-    --ro-bind /usr/share/terminfo       /usr/share/terminfo
-    --ro-bind /usr/share/ca-certificates /usr/share/ca-certificates
-    --ro-bind /usr/share/zoneinfo       /usr/share/zoneinfo
-    --ro-bind /usr/share/zsh            /usr/share/zsh
-    --ro-bind /usr/share/zsh-autosuggestions /usr/share/zsh-autosuggestions
-    --ro-bind /usr/share/rr             /usr/share/rr
+    --ro-bind-try /usr/share/terminfo   /usr/share/terminfo
+    --ro-bind-try /usr/share/ca-certificates /usr/share/ca-certificates
+    --ro-bind-try /usr/share/zoneinfo   /usr/share/zoneinfo
+    --ro-bind-try /usr/share/zsh         /usr/share/zsh
+    --ro-bind-try /usr/share/zsh-autosuggestions /usr/share/zsh-autosuggestions
+    --ro-bind-try /usr/share/rr          /usr/share/rr
 
     # --- man / groff ---
     --ro-bind-try /etc/manpath.config   /etc/manpath.config
-    --ro-bind     /etc/groff            /etc/groff
-    --ro-bind     /usr/share/groff      /usr/share/groff
+    --ro-bind-try /etc/groff            /etc/groff
+    --ro-bind-try /usr/share/groff      /usr/share/groff
     --ro-bind-try /usr/share/man        /usr/share/man
     --ro-bind-try /usr/local/man        /usr/local/man
     --ro-bind-try /usr/share/doc        /usr/share/doc
@@ -155,6 +155,7 @@ BWRAP_ARGS=(
     --dir /home/sandbox/.local
     --dir /home/sandbox/.local/bin
     --dir /home/sandbox/.local/share
+    --dir /home/sandbox/.local/state
     --dir /home/sandbox/.claude
     --dir /home/sandbox/.pi
     --dir /home/sandbox/.config
@@ -208,20 +209,20 @@ BWRAP_ARGS=(
     --ro-bind-try "$REAL_HOME/.gitconfig"     /home/sandbox/.gitconfig
 
     # --- claude symlink target (ro) — .local/bin/claude symlink points to real host path ---
-    --ro-bind "$CLAUDE_REAL"              "$CLAUDE_REAL"
+    "${CLAUDE_BIND_ARGS[@]}"
 
     # --- .claude data dir (rw) ---
-    --bind "$REAL_HOME/.claude"           /home/sandbox/.claude
+    --bind-try "$REAL_HOME/.claude"       /home/sandbox/.claude
 
     # --- pi config, auth, and session state (rw) ---
-    --bind "$REAL_HOME/.pi"               /home/sandbox/.pi
+    "${PI_BIND_ARGS[@]}"
 
     # --- .claude.json via fd ---
-    --file 3                              /home/sandbox/.claude.json
+    "${CLAUDE_CONFIG_ARGS[@]}"
 
     # --- .cache: only claude rw; p10k ro ---
     --dir /home/sandbox/.cache
-    --bind "$REAL_HOME/.cache/claude"                                  /home/sandbox/.cache/claude
+    --bind-try "$REAL_HOME/.cache/claude"                              /home/sandbox/.cache/claude
     --ro-bind-try "$REAL_HOME/.cache/p10k-dump-${HOST_USER}.zsh"               /home/sandbox/.cache/p10k-dump-${HOST_USER}.zsh
     --ro-bind-try "$REAL_HOME/.cache/p10k-dump-${HOST_USER}.zsh.zwc"           /home/sandbox/.cache/p10k-dump-${HOST_USER}.zsh.zwc
     --ro-bind-try "$REAL_HOME/.cache/p10k-instant-prompt-${HOST_USER}.zsh"     /home/sandbox/.cache/p10k-instant-prompt-${HOST_USER}.zsh
@@ -232,10 +233,10 @@ BWRAP_ARGS=(
     --ro-bind-try "$REAL_HOME/.cache/dblp" /home/sandbox/.cache/dblp
 
     # --- opencode state (rw) ---
-    --bind "$REAL_HOME/.local/share/opencode"   /home/sandbox/.local/share/opencode
-    --bind "$REAL_HOME/.local/state/opencode"   /home/sandbox/.local/state/opencode
-    --bind "$REAL_HOME/.cache/opencode"         /home/sandbox/.cache/opencode
-    --bind "$REAL_HOME/.config/opencode"        /home/sandbox/.config/opencode
+    --bind-try "$REAL_HOME/.local/share/opencode" /home/sandbox/.local/share/opencode
+    --bind-try "$REAL_HOME/.local/state/opencode" /home/sandbox/.local/state/opencode
+    --bind-try "$REAL_HOME/.cache/opencode"       /home/sandbox/.cache/opencode
+    --bind-try "$REAL_HOME/.config/opencode"      /home/sandbox/.config/opencode
 
     # --- project directory (rw, kept at real path) ---
     --bind "$REAL_PWD" "$REAL_PWD"
