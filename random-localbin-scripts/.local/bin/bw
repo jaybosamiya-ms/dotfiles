@@ -62,17 +62,20 @@ NODE_VERSION="24.17.0"
 # Project-keyed host cache for Cargo build artifacts
 # ---------------------------------------------------------------------------
 EPHEMERAL_CACHE=false
+EPHEMERAL_TMP=false
 HELP_REQUESTED=false
 for arg in "$@"; do
     case "$arg" in
         --ephemeral-cache) EPHEMERAL_CACHE=true ;;
+        --ephemeral-tmp) EPHEMERAL_TMP=true ;;
         -h|--help) HELP_REQUESTED=true; break ;;
         shell|claude|pi|opencode|--run) break ;;
     esac
 done
 
-CARGO_CACHE_BIND_ARGS=()
-if ! $EPHEMERAL_CACHE && ! $HELP_REQUESTED; then
+TMP_MOUNT_ARGS=(--tmpfs /tmp)
+CARGO_CACHE_MOUNT_ARGS=()
+if { ! $EPHEMERAL_CACHE || ! $EPHEMERAL_TMP; } && ! $HELP_REQUESTED; then
     CACHE_PARENT=${TMPDIR:-/tmp}
     CACHE_ROOT="$CACHE_PARENT/bw-cache-$REAL_UID"
     if ! mkdir -m 700 "$CACHE_ROOT" 2>/dev/null; then
@@ -85,11 +88,23 @@ if ! $EPHEMERAL_CACHE && ! $HELP_REQUESTED; then
     PROJECT_HASH=$(printf '%s' "$REAL_PWD" | sha256sum)
     PROJECT_HASH=${PROJECT_HASH%% *}
     PROJECT_CACHE="$CACHE_ROOT/$PROJECT_HASH"
-    mkdir -p "$PROJECT_CACHE/cargo-target" "$PROJECT_CACHE/cargo-build"
-    CARGO_CACHE_BIND_ARGS=(
-        --bind "$PROJECT_CACHE/cargo-target" /tmp/cargo-target
-        --bind "$PROJECT_CACHE/cargo-build"  /tmp/cargo-build
-    )
+    mkdir -p "$PROJECT_CACHE/tmp/cargo-target" "$PROJECT_CACHE/tmp/cargo-build" \
+        "$PROJECT_CACHE/cargo-target" "$PROJECT_CACHE/cargo-build"
+
+    if ! $EPHEMERAL_TMP; then
+        TMP_MOUNT_ARGS=(--bind "$PROJECT_CACHE/tmp" /tmp)
+    fi
+    if ! $EPHEMERAL_CACHE; then
+        CARGO_CACHE_MOUNT_ARGS=(
+            --bind "$PROJECT_CACHE/cargo-target" /tmp/cargo-target
+            --bind "$PROJECT_CACHE/cargo-build"  /tmp/cargo-build
+        )
+    elif ! $EPHEMERAL_TMP; then
+        CARGO_CACHE_MOUNT_ARGS=(
+            --tmpfs /tmp/cargo-target
+            --tmpfs /tmp/cargo-build
+        )
+    fi
 fi
 
 # ---------------------------------------------------------------------------
@@ -123,8 +138,8 @@ BWRAP_ARGS=(
     --die-with-parent
 
     # --- synthetic filesystems ---
-    --tmpfs /tmp
-    "${CARGO_CACHE_BIND_ARGS[@]}"
+    "${TMP_MOUNT_ARGS[@]}"
+    "${CARGO_CACHE_MOUNT_ARGS[@]}"
     --dev   /dev
     --dir   /dev/net
     --dev-bind-try /dev/net/tun         /dev/net/tun  # For LiteBox
@@ -287,7 +302,7 @@ BWRAP_ARGS=(
     --setenv USER  "sandbox"
     # Trigger powerlevel10k prompt change
     --setenv SSH_CONNECTION "127.0.0.1 0 127.0.0.1 0"
-    # Redirect Cargo artifacts into the project cache (or tmpfs with --ephemeral-cache).
+    # Redirect Cargo artifacts into dedicated project caches unless made ephemeral.
     --setenv CARGO_TARGET_DIR      /tmp/cargo-target
     --setenv CARGO_BUILD_BUILD_DIR /tmp/cargo-build
     # TEMP FOR LITEBOX
@@ -297,8 +312,8 @@ BWRAP_ARGS=(
 # ---------------------------------------------------------------------------
 # Options that must precede SELECTION/--run
 # ---------------------------------------------------------------------------
-while [[ "${1:-}" == --ephemeral-cache || "${1:-}" == --mount-readonly || "${1:-}" == --mount-readonly=* ]]; do
-    if [[ "$1" == --ephemeral-cache ]]; then
+while [[ "${1:-}" == --ephemeral-cache || "${1:-}" == --ephemeral-tmp || "${1:-}" == --mount-readonly || "${1:-}" == --mount-readonly=* ]]; do
+    if [[ "$1" == --ephemeral-cache || "$1" == --ephemeral-tmp ]]; then
         shift
         continue
     elif [[ "$1" == --mount-readonly=* ]]; then
@@ -322,16 +337,18 @@ done
 
 if [[ "${1:-}" == -h || "${1:-}" == --help ]]; then
     cat >&2 <<EOF
-Usage: $PROG [-h|--help] [--ephemeral-cache] [--mount-readonly PATH]... [SELECTION] [--run CMD [ARGS...]]
+Usage: $PROG [-h|--help] [--ephemeral-cache] [--ephemeral-tmp] [--mount-readonly PATH]... [SELECTION] [--run CMD [ARGS...]]
 
   SELECTION             One of: shell, claude, pi, opencode.
                         Launches that target directly (skips the fzf picker).
   --mount-readonly PATH Additionally bind PATH read-only at its real path
                         inside the sandbox. May be given multiple times.
                         Must come before SELECTION/--run.
-  --ephemeral-cache     Keep Cargo build artifacts in the sandbox tmpfs instead
-                        of the project-keyed ${TMPDIR:-/tmp}/bw-cache-$REAL_UID cache.
-                        Must come before SELECTION/--run.
+  --ephemeral-cache     Keep Cargo build artifacts in tmpfs instead of their
+                        dedicated project-keyed cache directories.
+  --ephemeral-tmp       Keep general /tmp in tmpfs. Cargo remains cached unless
+                        --ephemeral-cache is also given.
+                        Both flags must come before SELECTION/--run.
   --run CMD [ARGS...]   Run CMD inside the sandbox (non-interactive).
                         With no arguments, launches an fzf picker.
 EOF
