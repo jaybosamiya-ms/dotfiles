@@ -282,6 +282,9 @@ BWRAP_ARGS=(
 
     --ro-bind-try "$REAL_HOME/.cache/dblp" /home/sandbox/.cache/dblp
 
+    # --- clipboard image inbox (rw, intentionally the only host clipboard surface) ---
+    --bind-try "$REAL_HOME/.cache/clipboardbox" /home/sandbox/.cache/clipboardbox
+
     # --- opencode state (rw) ---
     --bind-try "$REAL_HOME/.local/share/opencode" /home/sandbox/.local/share/opencode
     --bind-try "$REAL_HOME/.local/state/opencode" /home/sandbox/.local/state/opencode

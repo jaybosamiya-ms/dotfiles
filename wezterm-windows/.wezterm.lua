@@ -69,6 +69,53 @@ config.scrollback_lines = 10000000
 -- }
 config.keys = {}
 
+-- Save clipboard images outside WSL/bubblewrap and paste the sandbox-visible
+-- path. If the clipboard has no image, insert NOIMG.
+local clipboardbox_script = [=[
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+$dir = '\\wsl.localhost\Ubuntu\home\jayb\.cache\clipboardbox'
+$image = [System.Windows.Forms.Clipboard]::GetImage()
+if ($null -eq $image) { exit 1 }
+try {
+  Get-ChildItem -LiteralPath $dir -Filter 'clipboard-*.png' -File |
+    Where-Object LastWriteTimeUtc -lt ([DateTime]::UtcNow.AddHours(-1)) |
+    Remove-Item -Force
+  $tmp = Join-Path $dir (".clipboard-" + [Guid]::NewGuid().ToString() + ".tmp.png")
+  $image.Save($tmp, [System.Drawing.Imaging.ImageFormat]::Png)
+  $hash = (Get-FileHash -LiteralPath $tmp -Algorithm SHA256).Hash.Substring(0, 12).ToLowerInvariant()
+  $name = "clipboard-$hash.png"
+  $path = Join-Path $dir $name
+  if (Test-Path -LiteralPath $path) {
+    Remove-Item -LiteralPath $tmp -Force
+    (Get-Item -LiteralPath $path).LastWriteTimeUtc = [DateTime]::UtcNow
+  } else {
+    Move-Item -LiteralPath $tmp -Destination $path
+  }
+  [Console]::Out.Write($name)
+} finally {
+  $image.Dispose()
+}
+]=]
+
+wezterm.on('paste-clipboard', function(window, pane)
+  local success, stdout = wezterm.run_child_process {
+    'powershell.exe',
+    '-NoProfile',
+    '-NonInteractive',
+    '-Sta',
+    '-Command',
+    clipboardbox_script,
+  }
+
+  local hash = stdout and stdout:match('^clipboard%-(%x+)%.png$')
+  if success and hash and #hash == 12 then
+    pane:send_text('~/.cache/clipboardbox/clipboard-' .. hash .. '.png')
+  else
+    pane:send_text('NOIMG')
+  end
+end)
+
 wezterm.on('toggle-title-bar', function(window, _pane)
   local overrides = window:get_config_overrides() or {}
 
@@ -92,6 +139,12 @@ table.insert(config.keys, {
   key = 'Enter',
   mods = 'ALT',
   action = wezterm.action.DisableDefaultAssignment,
+})
+
+table.insert(config.keys, {
+  key = 'v',
+  mods = 'CTRL|ALT|SHIFT',
+  action = wezterm.action.EmitEvent 'paste-clipboard',
 })
 
 table.insert(config.keys, {
