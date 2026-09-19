@@ -38,6 +38,8 @@ diff-args = ["$left", "$right"]
 diff-expected-exit-codes = [0, 1]
 
 [revset-aliases]
+# Revisions related to the current branch, plus trunk.
+"current_branch()" = "ancestors(trunk()..@, 2) | descendants(@) | trunk()"
 # Additionally, mark commits authored by other users as immutable too.
 #
 # The default immutable heads (`present(trunk()) | tags() |
@@ -87,10 +89,7 @@ d = ["diff", "--stat", "-r"]
 
 # Convenience way of looking at only stuff related to the current branch. Use
 # `jj log` for the full "normal" log.
-l = [
-  "log", "-r",
-  "ancestors(trunk()..@, 2) | descendants(@) | trunk()"
-]
+l = ["log", "-r", "current_branch()"]
 
 # Convenience for watching the log constantly
 wl = ["util", "exec", "--", "watch", "-n", "0.1", "jj", "l", "--color=always", "--ignore-working-copy"]
