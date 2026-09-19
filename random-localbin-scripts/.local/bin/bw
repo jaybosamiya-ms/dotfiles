@@ -245,6 +245,9 @@ BWRAP_ARGS=(
     # --- pi extensions (rw) ---
     --bind-try    "$REAL_HOME/.config/pi-extensions" /home/sandbox/.config/pi-extensions
 
+    # --- jj config (ro) ---
+    --ro-bind-try "$REAL_HOME/.config/jj" /home/sandbox/.config/jj
+
     # --- .local/bin (ro) — mise, env, etc; claude bound over it below ---
     --ro-bind-try "$REAL_HOME/.local/bin"     /home/sandbox/.local/bin
 
