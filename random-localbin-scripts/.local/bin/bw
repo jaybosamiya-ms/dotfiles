@@ -186,6 +186,8 @@ BWRAP_ARGS=(
     --ro-bind-try /usr/share/zsh         /usr/share/zsh
     --ro-bind-try /usr/share/zsh-autosuggestions /usr/share/zsh-autosuggestions
     --ro-bind-try /usr/share/rr          /usr/share/rr
+    --ro-bind-try /usr/share/pkgconfig   /usr/share/pkgconfig
+    --ro-bind-try /usr/share/mime        /usr/share/mime
 
     # --- man / groff ---
     --ro-bind-try /etc/manpath.config   /etc/manpath.config
