@@ -38,6 +38,11 @@ diff-args = ["$left", "$right"]
 diff-expected-exit-codes = [0, 1]
 
 [revset-aliases]
+# Closest revision that is mutable, described and either non-empty or a merge
+'closest_pushable(to)' = '''
+  heads(::to & mutable() & ~description(exact:"") & (~empty() | merges()))
+'''
+
 # Revisions related to the current branch, plus trunk.
 "current_branch()" = "ancestors(trunk()..@, 2) | descendants(@) | trunk()"
 # Additionally, mark commits authored by other users as immutable too.
@@ -49,6 +54,9 @@ diff-expected-exit-codes = [0, 1]
 # The `trunk().. &` bit is an optimization to scan for non-`mine()` commits
 # only among commits that are not in `trunk()`.
 "immutable_heads()" = "builtin_immutable_heads() | (trunk().. & ~mine())"
+
+[revsets]
+bookmark-advance-to = 'closest_pushable(@)'
 
 [templates]
 # Whenever pushing with `jj git push --change`, rather than the default `push-` prefix, use a custom one.
