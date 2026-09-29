@@ -454,8 +454,11 @@ def overlay(pane_id: str) -> int:
         if not assign_labels(matches):
             tmux("display-message", "jump-select: too many matches for two-key hints", check=False)
             return 0
-        render_matches(panes, matches)
-        chosen = choose_match(reader, matches)
+        if len(matches) == 1:
+            chosen = matches[0]
+        else:
+            render_matches(panes, matches)
+            chosen = choose_match(reader, matches)
         if chosen is not None:
             move_real_cursor(chosen, panes)
     return 0
