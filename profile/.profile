@@ -134,6 +134,11 @@ if [ -x "$HOME/.nix-profile/bin/Singular" ]; then
     export VERUS_SINGULAR_PATH="$HOME/.nix-profile/bin/Singular"
 fi
 
+# krew setup
+if [ -d "$HOME/.krew/bin" ]; then
+    export PATH="$HOME/.krew/bin:$PATH"
+fi
+
 # Set up auto change-dir
 #
 # Is on Windows Terminal folks' radar, and hopefully should be fixed
