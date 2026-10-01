@@ -63,11 +63,13 @@ NODE_VERSION="24.17.0"
 # ---------------------------------------------------------------------------
 EPHEMERAL_CACHE=false
 EPHEMERAL_TMP=false
+EPHEMERAL_SCCACHE=false
 HELP_REQUESTED=false
 for arg in "$@"; do
     case "$arg" in
         --ephemeral-cache) EPHEMERAL_CACHE=true ;;
         --ephemeral-tmp) EPHEMERAL_TMP=true ;;
+        --ephemeral-sccache) EPHEMERAL_SCCACHE=true ;;
         -h|--help) HELP_REQUESTED=true; break ;;
         shell|claude|pi|opencode|--run) break ;;
     esac
@@ -75,7 +77,8 @@ done
 
 TMP_MOUNT_ARGS=(--tmpfs /tmp)
 CARGO_CACHE_MOUNT_ARGS=()
-if { ! $EPHEMERAL_CACHE || ! $EPHEMERAL_TMP; } && ! $HELP_REQUESTED; then
+SCCACHE_MOUNT_ARGS=(--tmpfs /home/sandbox/.cache/sccache)
+if { ! $EPHEMERAL_CACHE || ! $EPHEMERAL_TMP || ! $EPHEMERAL_SCCACHE; } && ! $HELP_REQUESTED; then
     CACHE_PARENT=${TMPDIR:-/tmp}
     CACHE_ROOT="$CACHE_PARENT/bw-cache-$REAL_UID"
     if ! mkdir -m 700 "$CACHE_ROOT" 2>/dev/null; then
@@ -90,6 +93,12 @@ if { ! $EPHEMERAL_CACHE || ! $EPHEMERAL_TMP; } && ! $HELP_REQUESTED; then
     PROJECT_CACHE="$CACHE_ROOT/$PROJECT_HASH"
     mkdir -p "$PROJECT_CACHE/tmp/cargo-target" "$PROJECT_CACHE/tmp/cargo-build" \
         "$PROJECT_CACHE/cargo-target" "$PROJECT_CACHE/cargo-build"
+
+    # Shared by all bw sandboxes (cross-project reuse) but never with the host cache.
+    if ! $EPHEMERAL_SCCACHE; then
+        mkdir -p "$CACHE_ROOT/sccache"
+        SCCACHE_MOUNT_ARGS=(--bind "$CACHE_ROOT/sccache" /home/sandbox/.cache/sccache)
+    fi
 
     if ! $EPHEMERAL_TMP; then
         TMP_MOUNT_ARGS=(--bind "$PROJECT_CACHE/tmp" /tmp)
@@ -287,6 +296,9 @@ BWRAP_ARGS=(
 
     --ro-bind-try "$REAL_HOME/.cache/dblp" /home/sandbox/.cache/dblp
 
+    # --- sccache (rw, sandbox-only cache) ---
+    "${SCCACHE_MOUNT_ARGS[@]}"
+
     # --- clipboard image inbox (rw, intentionally the only host clipboard surface) ---
     --bind-try "$REAL_HOME/.cache/clipboardbox" /home/sandbox/.cache/clipboardbox
 
@@ -313,15 +325,30 @@ BWRAP_ARGS=(
     # Redirect Cargo artifacts into dedicated project caches unless made ephemeral.
     --setenv CARGO_TARGET_DIR      /tmp/cargo-target
     --setenv CARGO_BUILD_BUILD_DIR /tmp/cargo-build
+    # The network namespace is shared with the host, so use a Unix socket inside
+    # the sandbox's /tmp rather than the default TCP port, which would reach a
+    # host-side sccache server.
+    --setenv SCCACHE_DIR        /home/sandbox/.cache/sccache
+    --setenv SCCACHE_SERVER_UDS /tmp/sccache.sock
     # TEMP FOR LITEBOX
     --setenv OUT_DIR /tmp
 )
 
+# Only wrap rustc with sccache if it is reachable on the sandbox PATH; otherwise
+# every cargo build would fail. Sandbox paths under /home/sandbox mirror $REAL_HOME.
+IFS=: read -r -a SANDBOX_PATH_ENTRIES <<< "$SANDBOX_PATH"
+for entry in "${SANDBOX_PATH_ENTRIES[@]}"; do
+    if [[ -x "${entry/#\/home\/sandbox/$REAL_HOME}/sccache" ]]; then
+        BWRAP_ARGS+=(--setenv RUSTC_WRAPPER "$entry/sccache")
+        break
+    fi
+done
+
 # ---------------------------------------------------------------------------
 # Options that must precede SELECTION/--run
 # ---------------------------------------------------------------------------
-while [[ "${1:-}" == --ephemeral-cache || "${1:-}" == --ephemeral-tmp || "${1:-}" == --mount-readonly || "${1:-}" == --mount-readonly=* ]]; do
-    if [[ "$1" == --ephemeral-cache || "$1" == --ephemeral-tmp ]]; then
+while [[ "${1:-}" == --ephemeral-cache || "${1:-}" == --ephemeral-tmp || "${1:-}" == --ephemeral-sccache || "${1:-}" == --mount-readonly || "${1:-}" == --mount-readonly=* ]]; do
+    if [[ "$1" == --ephemeral-cache || "$1" == --ephemeral-tmp || "$1" == --ephemeral-sccache ]]; then
         shift
         continue
     elif [[ "$1" == --mount-readonly=* ]]; then
@@ -345,7 +372,7 @@ done
 
 if [[ "${1:-}" == -h || "${1:-}" == --help ]]; then
     cat >&2 <<EOF
-Usage: $PROG [-h|--help] [--ephemeral-cache] [--ephemeral-tmp] [--mount-readonly PATH]... [SELECTION] [--run CMD [ARGS...]]
+Usage: $PROG [-h|--help] [--ephemeral-cache] [--ephemeral-tmp] [--ephemeral-sccache] [--mount-readonly PATH]... [SELECTION] [--run CMD [ARGS...]]
 
   SELECTION             One of: shell, claude, pi, opencode.
                         Launches that target directly (skips the fzf picker).
@@ -353,10 +380,13 @@ Usage: $PROG [-h|--help] [--ephemeral-cache] [--ephemeral-tmp] [--mount-readonly
                         inside the sandbox. May be given multiple times.
                         Must come before SELECTION/--run.
   --ephemeral-cache     Keep Cargo build artifacts in tmpfs instead of their
-                        dedicated project-keyed cache directories.
+                        dedicated project-keyed cache directories. Does not
+                        affect sccache (see --ephemeral-sccache).
   --ephemeral-tmp       Keep general /tmp in tmpfs. Cargo remains cached unless
                         --ephemeral-cache is also given.
-                        Both flags must come before SELECTION/--run.
+  --ephemeral-sccache   Keep the sccache cache in tmpfs instead of the cache
+                        shared by all bw sandboxes (separate from the host's).
+                        These flags must come before SELECTION/--run.
   --run CMD [ARGS...]   Run CMD inside the sandbox (non-interactive).
                         With no arguments, launches an fzf picker.
 EOF
