@@ -125,6 +125,10 @@ fi
 # Also, `wslview -r` is useful to set up browser stuff
 if (( ${+commands[wslview]} )); then
     _wslview_path="${commands[wslview]}"
+    # If this fails with `run-detectors: unable to find an interpreter for ...`,
+    # binfmt_misc is routing Windows .exe files to mono instead of WSL interop.
+    # See https://github.com/microsoft/WSL/issues/5466; fix with
+    # `sudo update-binfmts --disable cli`.
     function open {
         local file
         for file in "$@"; do
