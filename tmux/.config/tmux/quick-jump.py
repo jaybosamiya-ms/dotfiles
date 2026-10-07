@@ -332,6 +332,35 @@ def cursor_position(pane_id: str) -> tuple[int, int] | None:
         return None
 
 
+def settled_cursor(pane_id: str, timeout: float = 1.0) -> tuple[int, int] | None:
+    """Wait until the app has drained queued keys: the cursor must hold still
+    for a few consecutive polls, so big moves wait only as long as they need."""
+    deadline = time.monotonic() + timeout
+    last = cursor_position(pane_id)
+    stable = 0
+    while stable < 2 and time.monotonic() < deadline:
+        time.sleep(0.02)
+        current = cursor_position(pane_id)
+        stable = stable + 1 if current == last else 0
+        last = current
+    return last
+
+
+def linear_steps(lines: list[str], width: int, start: tuple[int, int], end: tuple[int, int]) -> int:
+    """Signed Left/Right presses between two cells, assuming rows that fill the
+    pane are soft-wrapped (no extra press) and shorter rows end in a newline."""
+    sign = 1
+    if (end[1], end[0]) < (start[1], start[0]):
+        start, end, sign = end, start, -1
+    (x, y), (target_x, target_y) = start, end
+    steps = 0
+    for row in range(y, target_y):
+        used = display_width(lines[row].rstrip()) if row < len(lines) else 0
+        steps += (width if used >= width else used + 1) - x
+        x = 0
+    return sign * (steps + target_x - x)
+
+
 def move_real_cursor(match: Match, panes: list[Pane]) -> None:
     pane = next((item for item in panes if item.pane_id == match.pane_id), None)
     if pane is None:
@@ -357,6 +386,7 @@ def move_real_cursor(match: Match, panes: list[Pane]) -> None:
         return capture_lines(match.pane_id, pane.height)[first_row:last_row]
 
     expected_lines = movement_rows()
+    tried_linear = False
 
     for _ in range(6):
         current = cursor_position(match.pane_id)
@@ -367,6 +397,26 @@ def move_real_cursor(match: Match, panes: list[Pane]) -> None:
         if before == 0:
             return
 
+        # Some apps (readline with wrapped or multi-line input) treat Up/Down
+        # as history navigation, so first try reaching other rows purely with
+        # Left/Right. Apps whose Left/Right stop at line edges (e.g. vim) just
+        # fall through to the vertical strategy below from wherever they stop.
+        if target_y != current_y and not tried_linear:
+            tried_linear = True
+            steps = linear_steps(
+                capture_lines(match.pane_id, pane.height), pane.width,
+                (current_x, current_y), (target_x, target_y),
+            )
+            if steps:
+                tmux(
+                    "send-keys", "-N", str(abs(steps)), "-t", match.pane_id,
+                    "Right" if steps > 0 else "Left", check=False,
+                )
+                settled_cursor(match.pane_id)
+                if movement_rows() != expected_lines:
+                    return
+            continue
+
         # Vertical movement is more reliable in prompts such as readline when
         # it starts at column zero. Re-anchor there before changing rows, then
         # calculate the final horizontal move from the observed position.
@@ -375,10 +425,9 @@ def move_real_cursor(match: Match, panes: list[Pane]) -> None:
                 "send-keys", "-N", str(current_x),
                 "-t", match.pane_id, "Left", check=False,
             )
-            time.sleep(0.02)
+            anchored = settled_cursor(match.pane_id)
             if movement_rows() != expected_lines:
                 return
-            anchored = cursor_position(match.pane_id)
             if anchored is None:
                 return
             current_x, current_y = anchored
@@ -389,10 +438,9 @@ def move_real_cursor(match: Match, panes: list[Pane]) -> None:
                 "send-keys", "-N", str(abs(target_y - current_y)),
                 "-t", match.pane_id, key, check=False,
             )
-            time.sleep(0.02)
+            moved = settled_cursor(match.pane_id)
             if movement_rows() != expected_lines:
                 return
-            moved = cursor_position(match.pane_id)
             if moved is None:
                 return
             current_x, current_y = moved
@@ -404,10 +452,9 @@ def move_real_cursor(match: Match, panes: list[Pane]) -> None:
                 "-t", match.pane_id, key, check=False,
             )
 
-        time.sleep(0.04)
+        observed = settled_cursor(match.pane_id)
         if movement_rows() != expected_lines:
             return
-        observed = cursor_position(match.pane_id)
         if observed is None:
             return
         after = abs(target_x - observed[0]) + abs(target_y - observed[1])
