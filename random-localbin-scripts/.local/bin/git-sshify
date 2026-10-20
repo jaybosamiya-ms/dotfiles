@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Convert HTTPS git remotes to SSH. Usage: git-sshify [remote...] (default: all remotes)
+set -euo pipefail
+
+remotes=("$@")
+[ ${#remotes[@]} -eq 0 ] && mapfile -t remotes < <(git remote)
+
+for r in "${remotes[@]}"; do
+  for kind in fetch push; do
+    flag=(); [ "$kind" = push ] && flag=(--push)
+    url=$(git remote get-url "${flag[@]}" "$r")
+    if [[ $url =~ ^https://([^/@]+@)?([^/]+)/(.+)$ ]]; then
+      host=${BASH_REMATCH[2]} path=${BASH_REMATCH[3]%/}
+      new="git@$host:${path%.git}.git"
+      git remote set-url "${flag[@]}" "$r" "$new"
+      echo "$r ($kind): $url -> $new"
+    fi
+  done
+done
