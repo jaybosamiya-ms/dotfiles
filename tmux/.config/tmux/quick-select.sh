@@ -8,6 +8,9 @@
 #   uppercase hint  copy, then paste it into the active pane
 #   Esc / C-c        cancel
 #
+# Hints are remembered per user for a while, so a string keeps its hint across
+# runs where the label layout allows it.
+#
 # Modes:
 #   quick-select.sh [pane-id]        launcher: opens the overlay popup
 #   quick-select.sh --hints <pane>   the overlay itself (runs inside the popup)
@@ -60,7 +63,10 @@ fi
 # ----------------------------------------------------------------- overlay ---
 pane=$2
 map=$(mktemp "${TMPDIR:-/tmp}/tmux-quick-select.XXXXXX")
-trap 'rm -f "$map"' EXIT
+# Lines are "epoch<TAB>label<TAB>text", newest first.
+cache=${TMPDIR:-/tmp}/tmux-quick-select-$(id -u).cache
+newcache=$(mktemp "$cache.XXXXXX")
+trap 'rm -f "$map" "$newcache"' EXIT
 
 window=$(tmux display-message -p -t "$pane" '#{window_id}')
 
@@ -92,6 +98,7 @@ compose() {
 }
 
 overlay=$(compose | awk -v MAP="$map" \
+  -v CACHE="$cache" -v NEWCACHE="$newcache" -v NOW="$(date +%s)" -v TTL=3600 -v CAP=200 \
   -v B_V="$b_v" -v B_H="$b_h" -v B_DR="$b_dr" -v B_DL="$b_dl" -v B_UR="$b_ur" \
   -v B_UL="$b_ul" -v B_UDR="$b_udr" -v B_UDL="$b_udl" -v B_ULR="$b_ulr" \
   -v B_DLR="$b_dlr" -v B_ALL="$b_all" '
@@ -180,7 +187,7 @@ END {
 
   # Identical text shares one hint, so repeated tokens do not burn letters.
   uniq = 0
-  for (i = 1; i <= n; i++) if (!(mtxt[ord[i]] in seen)) seen[mtxt[ord[i]]] = ++uniq
+  for (i = 1; i <= n; i++) if (!(mtxt[ord[i]] in seen)) { seen[mtxt[ord[i]]] = ++uniq; utxt[uniq] = mtxt[ord[i]] }
 
   # Keep as many hints single-letter as possible: only enough trailing letters
   # are given up as two-letter prefixes to cover what is left over, and those
@@ -200,8 +207,47 @@ END {
     label[k] = substr(ALPH, singles + (m % prefixes) + 1, 1) substr(ALPH, int(m / prefixes) + 1, 1)
     m++
   }
-  for (t in seen) if (label[seen[t]] != "") printf "%s\t%s\n", label[seen[t]], t > MAP
-  for (i = 1; i <= n; i++) hint[i] = label[seen[mtxt[i]]]
+  npool = 0
+  for (k = 1; k <= uniq; k++) if (label[k] != "") { npool++; inpool[label[k]] = 1 }
+
+  # Remembered hints are only reused if this run hands out that label at all,
+  # so no single-letter hint can shadow a two-letter one. Stale entries can
+  # leave two strings with the same label; the most recently seen one wins.
+  while ((getline line < CACHE) > 0) {
+    split(line, f, "\t")
+    t = substr(line, length(f[1]) + length(f[2]) + 3)
+    if (f[2] == "" || NOW - f[1] > TTL || (t in ctime)) continue
+    ctime[t] = f[1] + 0; clabel[t] = f[2]; corder[++nc] = t
+    reserved[f[2]] = 1
+  }
+  close(CACHE)
+  for (t in seen)
+    if ((t in clabel) && (clabel[t] in inpool)) {
+      l = clabel[t]
+      if (!(l in owner) || ctime[t] > ctime[owner[l]]) owner[l] = t
+    }
+  for (l in owner) { lab[owner[l]] = l; used[l] = 1 }
+
+  # New strings prefer labels no remembered string holds, so one scrolling back
+  # into view can get its old hint back.
+  nfree = 0
+  for (pass = 1; pass <= 2; pass++)
+    for (k = 1; k <= npool; k++)
+      if (!(label[k] in used) && (pass == 2) == (label[k] in reserved)) free[++nfree] = label[k]
+  taken = 0
+  for (u = 1; u <= uniq && taken < nfree; u++) if (!(utxt[u] in lab)) lab[utxt[u]] = free[++taken]
+
+  for (t in lab) {
+    printf "%s\t%s\n", lab[t], t > MAP
+    printf "%s\t%s\t%s\n", NOW, lab[t], t > NEWCACHE
+    kept++
+  }
+  for (c = 1; c <= nc && kept < CAP; c++) {
+    t = corder[c]
+    if (!(t in seen)) { printf "%s\t%s\t%s\n", ctime[t], clabel[t], t > NEWCACHE; kept++ }
+  }
+  close(NEWCACHE)
+  for (i = 1; i <= n; i++) hint[i] = lab[mtxt[i]]
 
   # Pane borders, so the overlay looks like the window it covers. Cells are
   # collected first, then drawn with the glyph their connections call for, which
@@ -238,6 +284,7 @@ END {
   }
 }
 ')
+[ -s "$newcache" ] && mv -f "$newcache" "$cache"
 
 if [ "$(head -1 "$map" 2>/dev/null)" = NONE ] || [ ! -s "$map" ]; then
   tmux display-message 'quick-select: nothing found'
