@@ -82,3 +82,5 @@
 	conflictStyle = zdiff3
 [help]
 	autocorrect = prompt
+[log]
+	date = auto:human
