@@ -177,6 +177,29 @@ jj log -r 'main..@'
 jj diff -r 'main..@' | llm --system "$SYSTEM_PROMPT"
 """, ""]
 
+# Hand the currently conflicted files to pi to resolve interactively.
+resolve-pi = ["util", "exec", "--", "bash", "-c", """
+#!/usr/bin/env bash
+set -euo pipefail
+FILES=$(jj resolve --list "$@" | awk '{print $1}')
+if [[ -z "$FILES" ]]; then
+    echo "No conflicts to resolve."
+    exit 0
+fi
+PROMPT="The following files in this jj repository contain merge conflicts:
+
+$FILES
+
+Resolve the conflicts in these files by editing them directly, removing all conflict markers.
+
+Rules:
+- Do not run any jj commands that modify the repository (e.g. squash, new, edit, resolve, restore, abandon, rebase, describe). Read-only commands like jj log, jj diff, jj show, and jj file show are fine for understanding the history and intent of each side.
+- If a resolution is obvious (e.g. independent changes that combine cleanly, or one side is clearly a superset of the other), just apply it.
+- If a resolution requires a non-trivial judgment call (conflicting semantics, which behavior to keep, etc.), use the question tool to ask me before making that change. Present the concrete options, mark the one you recommend with \"(Recommended)\" in its label, and briefly explain the trade-offs.
+- When done, summarize how each conflict was resolved."
+pi --no-session "$PROMPT"
+""", ""]
+
 # Tiny convenience script to name a branch automatically based on an LLM looking
 # at the revisions since the last bookmark.
 llmb = ["util", "exec", "--", "bash", "-c", """
