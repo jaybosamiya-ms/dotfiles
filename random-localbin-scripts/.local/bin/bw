@@ -360,52 +360,67 @@ WORKTREE_MOUNTED=false
 # ---------------------------------------------------------------------------
 # Options that must precede SELECTION/--run
 # ---------------------------------------------------------------------------
-while [[ "${1:-}" == --worktree || "${1:-}" == --ephemeral-cache || "${1:-}" == --ephemeral-tmp || "${1:-}" == --ephemeral-sccache || "${1:-}" == --mount-readonly || "${1:-}" == --mount-readonly=* ]]; do
-    if [[ "$1" == --ephemeral-cache || "$1" == --ephemeral-tmp || "$1" == --ephemeral-sccache ]]; then
-        shift
-        continue
-    elif [[ "$1" == --worktree ]]; then
-        if [[ -z "$WORKTREE_COMMON_DIR" ]]; then
-            echo "$PROG: --worktree: $REAL_PWD is not inside a linked git worktree" >&2
-            exit 1
-        fi
-        MOUNT_PATH=$WORKTREE_COMMON_DIR
-        WORKTREE_MOUNTED=true
-        shift
-    elif [[ "$1" == --mount-readonly=* ]]; then
-        MOUNT_PATH=${1#--mount-readonly=}
-        shift
-    else
-        if [[ $# -lt 2 ]]; then
-            echo "$PROG: --mount-readonly requires a PATH argument" >&2
-            exit 1
-        fi
-        MOUNT_PATH=$2
-        shift 2
-    fi
+while :; do
+    case "${1:-}" in
+        --ephemeral-cache|--ephemeral-tmp|--ephemeral-sccache)
+            shift
+            continue
+            ;;
+        --worktree|--worktree-rw)
+            if [[ -z "$WORKTREE_COMMON_DIR" ]]; then
+                echo "$PROG: $1: $REAL_PWD is not inside a linked git worktree" >&2
+                exit 1
+            fi
+            OPT=$1
+            MOUNT_PATH=$WORKTREE_COMMON_DIR
+            WORKTREE_MOUNTED=true
+            shift
+            ;;
+        --mount-readonly=*|--mount-rw=*)
+            OPT=${1%%=*}
+            MOUNT_PATH=${1#*=}
+            shift
+            ;;
+        --mount-readonly|--mount-rw)
+            OPT=$1
+            if [[ $# -lt 2 ]]; then
+                echo "$PROG: $OPT requires a PATH argument" >&2
+                exit 1
+            fi
+            MOUNT_PATH=$2
+            shift 2
+            ;;
+        *) break ;;
+    esac
     if [[ ! -e "$MOUNT_PATH" ]]; then
-        echo "$PROG: --mount-readonly: $MOUNT_PATH does not exist" >&2
+        echo "$PROG: $OPT: $MOUNT_PATH does not exist" >&2
         exit 1
     fi
     MOUNT_REAL=$(realpath "$MOUNT_PATH")
-    BWRAP_ARGS+=(--ro-bind "$MOUNT_REAL" "$MOUNT_REAL")
+    case "$OPT" in
+        *-rw) BWRAP_ARGS+=(--bind "$MOUNT_REAL" "$MOUNT_REAL") ;;
+        *)    BWRAP_ARGS+=(--ro-bind "$MOUNT_REAL" "$MOUNT_REAL") ;;
+    esac
 done
 
 if [[ -n "$WORKTREE_COMMON_DIR" ]] && ! $WORKTREE_MOUNTED && ! $HELP_REQUESTED; then
-    echo "$PROG: warning: git worktree detected; consider \`$PROG --worktree\`" >&2
+    echo "$PROG: warning: git worktree detected; consider \`$PROG --worktree\` or \`$PROG --worktree-rw\`" >&2
 fi
 
 if [[ "${1:-}" == -h || "${1:-}" == --help ]]; then
     cat >&2 <<EOF
-Usage: $PROG [-h|--help] [--ephemeral-cache] [--ephemeral-tmp] [--ephemeral-sccache] [--mount-readonly PATH]... [--worktree] [SELECTION] [--run CMD [ARGS...]]
+Usage: $PROG [-h|--help] [--ephemeral-cache] [--ephemeral-tmp] [--ephemeral-sccache] [--mount-readonly PATH]... [--mount-rw PATH]... [--worktree|--worktree-rw] [SELECTION] [--run CMD [ARGS...]]
 
   SELECTION             One of: shell, claude, pi, opencode.
                         Launches that target directly (skips the fzf picker).
   --mount-readonly PATH Additionally bind PATH read-only at its real path
                         inside the sandbox. May be given multiple times.
                         Must come before SELECTION/--run.
+  --mount-rw PATH       Like --mount-readonly, but bind PATH read-write.
   --worktree            When inside a linked git worktree, equivalent to
                         --mount-readonly of the main repo's git dir.
+  --worktree-rw         Like --worktree, but mount the git dir read-write
+                        (needed for commits/fetches from the worktree).
   --ephemeral-cache     Keep Cargo build artifacts in tmpfs instead of their
                         dedicated project-keyed cache directories. Does not
                         affect sccache (see --ephemeral-sccache).
