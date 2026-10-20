@@ -345,12 +345,33 @@ for entry in "${SANDBOX_PATH_ENTRIES[@]}"; do
 done
 
 # ---------------------------------------------------------------------------
+# Linked git worktree detection: the worktree's .git points into the main
+# repo's git dir, which is outside the sandbox unless mounted.
+# ---------------------------------------------------------------------------
+WORKTREE_COMMON_DIR=""
+if GIT_DIRS=$(git -C "$REAL_PWD" rev-parse --path-format=absolute --git-dir --git-common-dir 2>/dev/null); then
+    { read -r GIT_DIR_ABS; read -r GIT_COMMON_ABS; } <<< "$GIT_DIRS"
+    if [[ "$GIT_DIR_ABS" != "$GIT_COMMON_ABS" ]]; then
+        WORKTREE_COMMON_DIR=$(realpath "$GIT_COMMON_ABS")
+    fi
+fi
+WORKTREE_MOUNTED=false
+
+# ---------------------------------------------------------------------------
 # Options that must precede SELECTION/--run
 # ---------------------------------------------------------------------------
-while [[ "${1:-}" == --ephemeral-cache || "${1:-}" == --ephemeral-tmp || "${1:-}" == --ephemeral-sccache || "${1:-}" == --mount-readonly || "${1:-}" == --mount-readonly=* ]]; do
+while [[ "${1:-}" == --worktree || "${1:-}" == --ephemeral-cache || "${1:-}" == --ephemeral-tmp || "${1:-}" == --ephemeral-sccache || "${1:-}" == --mount-readonly || "${1:-}" == --mount-readonly=* ]]; do
     if [[ "$1" == --ephemeral-cache || "$1" == --ephemeral-tmp || "$1" == --ephemeral-sccache ]]; then
         shift
         continue
+    elif [[ "$1" == --worktree ]]; then
+        if [[ -z "$WORKTREE_COMMON_DIR" ]]; then
+            echo "$PROG: --worktree: $REAL_PWD is not inside a linked git worktree" >&2
+            exit 1
+        fi
+        MOUNT_PATH=$WORKTREE_COMMON_DIR
+        WORKTREE_MOUNTED=true
+        shift
     elif [[ "$1" == --mount-readonly=* ]]; then
         MOUNT_PATH=${1#--mount-readonly=}
         shift
@@ -370,15 +391,21 @@ while [[ "${1:-}" == --ephemeral-cache || "${1:-}" == --ephemeral-tmp || "${1:-}
     BWRAP_ARGS+=(--ro-bind "$MOUNT_REAL" "$MOUNT_REAL")
 done
 
+if [[ -n "$WORKTREE_COMMON_DIR" ]] && ! $WORKTREE_MOUNTED && ! $HELP_REQUESTED; then
+    echo "$PROG: warning: git worktree detected; consider \`$PROG --worktree\`" >&2
+fi
+
 if [[ "${1:-}" == -h || "${1:-}" == --help ]]; then
     cat >&2 <<EOF
-Usage: $PROG [-h|--help] [--ephemeral-cache] [--ephemeral-tmp] [--ephemeral-sccache] [--mount-readonly PATH]... [SELECTION] [--run CMD [ARGS...]]
+Usage: $PROG [-h|--help] [--ephemeral-cache] [--ephemeral-tmp] [--ephemeral-sccache] [--mount-readonly PATH]... [--worktree] [SELECTION] [--run CMD [ARGS...]]
 
   SELECTION             One of: shell, claude, pi, opencode.
                         Launches that target directly (skips the fzf picker).
   --mount-readonly PATH Additionally bind PATH read-only at its real path
                         inside the sandbox. May be given multiple times.
                         Must come before SELECTION/--run.
+  --worktree            When inside a linked git worktree, equivalent to
+                        --mount-readonly of the main repo's git dir.
   --ephemeral-cache     Keep Cargo build artifacts in tmpfs instead of their
                         dedicated project-keyed cache directories. Does not
                         affect sccache (see --ephemeral-sccache).
