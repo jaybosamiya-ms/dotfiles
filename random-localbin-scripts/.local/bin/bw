@@ -2,6 +2,27 @@
 set -eu
 PROG="${0##*/}"
 
+# Handled before the dangerous-directory guard so shells can source it from $HOME
+if [[ "${1:-}" == completion && "${2:-}" == zsh ]]; then
+    cat <<EOF
+_$PROG() {
+    _arguments -s \\
+        '(- *)'{-h,--help}'[show help]' \\
+        '--ephemeral-cache[keep Cargo build artifacts in tmpfs]' \\
+        '--ephemeral-tmp[keep /tmp in tmpfs]' \\
+        '--ephemeral-sccache[keep sccache cache in tmpfs]' \\
+        '*--mount-readonly[bind PATH read-only]:path:_files' \\
+        '*--mount-rw[bind PATH read-write]:path:_files' \\
+        '(--worktree-rw)--worktree[mount main repo git dir read-only]' \\
+        '(--worktree)--worktree-rw[mount main repo git dir read-write]' \\
+        '(1 *)--run[run a command inside the sandbox]:*::command:_normal' \\
+        '1:selection:(shell claude pi opencode)'
+}
+compdef _$PROG $PROG
+EOF
+    exit 0
+fi
+
 # ---------------------------------------------------------------------------
 # Dangerous-directory guard
 # ---------------------------------------------------------------------------

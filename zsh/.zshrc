@@ -145,6 +145,11 @@ if command -v jj >/dev/null; then
     source <(jj util completion zsh)
 fi
 
+# Get completions for the bw sandbox script if available
+if command -v bw >/dev/null; then
+    source <(bw completion zsh)
+fi
+
 # Make it easy to clear out any existing open SSH sockets
 function ssh-clear {
     # Ask for confirmation on each file in ~/.ssh/*.sock
