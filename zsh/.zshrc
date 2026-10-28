@@ -132,6 +132,9 @@ if (( ${+commands[wslview]} )); then
     function open {
         local file
         for file in "$@"; do
+            # wslview hardcodes \\wsl$\<distro> for Linux paths, which no longer
+            # resolves here; wslpath yields the working \\wsl.localhost form.
+            [[ -e "$file" ]] && file="$(wslpath -w "$file")"
             "$_wslview_path" "$file"
         done
     }
