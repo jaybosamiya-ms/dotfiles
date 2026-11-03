@@ -218,6 +218,10 @@ BWRAP_ARGS=(
     --ro-bind-try /usr/share/rr          /usr/share/rr
     --ro-bind-try /usr/share/pkgconfig   /usr/share/pkgconfig
     --ro-bind-try /usr/share/mime        /usr/share/mime
+    --ro-bind-try /usr/share/file        /usr/share/file
+    --ro-bind-try /usr/share/misc        /usr/share/misc
+    --ro-bind-try /etc/magic             /etc/magic
+    --ro-bind-try /etc/magic.mime        /etc/magic.mime
 
     # --- man / groff ---
     --ro-bind-try /etc/manpath.config   /etc/manpath.config
