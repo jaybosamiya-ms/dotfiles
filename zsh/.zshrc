@@ -216,7 +216,31 @@ fi
 #
 # Set up bcat as a quick alias to cat, to quickly access cat if bat doesn't make sense for some use case
 if command -v bat >/dev/null; then
-    alias cat=bat
+    # Also accepts `file:line` / `file:line:col` (as printed by compilers, rg,
+    # etc.): highlights that line and opens the pager scrolled to it.
+    function cat() {
+        local arg line nfiles=0
+        local -a args
+        for arg in "$@"; do
+            if [[ ! -e "$arg" && "$arg" =~ '^([^:]+):([0-9]+)(:[0-9]+)?:?$' && -e "${match[1]}" ]]; then
+                (( nfiles++ ))
+                line="${match[2]}"
+                args+=("${match[1]}")
+            else
+                [[ -e "$arg" ]] && (( nfiles++ ))
+                args+=("$arg")
+            fi
+        done
+        # bat applies highlights to every file and the jump would be relative
+        # to the concatenated output, so only do this for a single file.
+        (( nfiles > 1 )) && line=
+        if [[ -n "$line" ]]; then
+            args=(--highlight-line "$line" "${args[@]}")
+            bat --pager "less -RF -j.5 +${line}g" "${args[@]}"
+        else
+            bat "${args[@]}"
+        fi
+    }
     alias bcat=/bin/cat
 fi
 
