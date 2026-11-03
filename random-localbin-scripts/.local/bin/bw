@@ -351,6 +351,12 @@ BWRAP_ARGS=(
     # host-side sccache server.
     --setenv SCCACHE_DIR        /home/sandbox/.cache/sccache
     --setenv SCCACHE_SERVER_UDS /tmp/sccache.sock
+    # Host worktrees outside the sandbox look stale from inside it, so git gc
+    # (incl. auto gc) would prune their metadata from any writable git dir.
+    # Env-based config stays sandbox-local and overrides repo config.
+    --setenv GIT_CONFIG_COUNT   1
+    --setenv GIT_CONFIG_KEY_0   gc.worktreePruneExpire
+    --setenv GIT_CONFIG_VALUE_0 never
     # TEMP FOR LITEBOX
     --setenv OUT_DIR /tmp
 )
